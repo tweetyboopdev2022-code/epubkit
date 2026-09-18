@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Local settings and run artefacts. kobokit.toml is ignored on purpose: it
+# names real paths on a real machine, and the example lives in the README.
+kobokit.toml
+config.local.sh
+.kobokit-work/
+.kobokit-originals/
+kobokit-state.json
+REPORT.md
+
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.DS_Store
