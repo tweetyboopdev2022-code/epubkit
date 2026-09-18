@@ -1,0 +1,293 @@
+"""The stage rules that books get ruined by when they are wrong."""
+from __future__ import annotations
+
+import logging
+import zipfile
+
+import pytest
+from conftest import make_epub
+
+from kobokit.config import Config, MetadataConfig
+from kobokit.stages import recaps as recaps_mod
+from kobokit.stages.base import Context
+from kobokit.stages.metadata import _filename_for, _safe, _sort_name
+from kobokit.stages.recaps import RecapStage, _cast_rows, _manifest, _parse
+from kobokit.stages.repair import RepairStage
+from kobokit.stages.validate import ValidateStage
+from kobokit.state import BookRecord
+
+
+def context(cfg, path, work, provider=None):
+    return Context(config=cfg, record=BookRecord(source=str(path)), path=path,
+                   work=work, log=logging.getLogger("kobokit.test"),
+                   provider=provider)
+
+
+# -- filenames -------------------------------------------------------------
+
+M = MetadataConfig()
+
+
+def test_series_books_are_named_for_sorting():
+    name = _filename_for({"title": "Goblet of Fire", "authors": ["J. K. Rowling"],
+                          "series": "Harry Potter", "series_index": 4}, M)
+    assert name == "Harry Potter 04 - Goblet of Fire - J. K. Rowling"
+
+
+def test_a_standalone_has_no_series_prefix():
+    assert _filename_for({"title": "Carrie", "authors": ["Stephen King"]}, M) \
+        == "Carrie - Stephen King"
+
+
+def test_a_long_series_name_is_never_abbreviated():
+    """The whole point: the full series name and the full title stay."""
+    series = "The Extraordinarily Long Chronicles of the Somewhat Weary Traveller"
+    title = "In Which Rather a Lot Happens Over the Course of a Single Afternoon"
+    name = _filename_for({"title": title, "authors": ["A Writer"],
+                          "series": series, "series_index": 3}, M)
+    assert series in name and title in name
+
+
+def test_the_author_gives_way_before_the_title_does():
+    title = "T" * 150
+    authors = ["An Author With A Very Long Name Indeed"] * 4
+    name = _filename_for({"title": title, "authors": authors,
+                          "series": "S" * 60, "series_index": 2}, M)
+    assert title in name                     # the title survives whole
+    assert "S" * 60 in name                  # so does the series
+    assert len(name.encode("utf-8")) <= 240  # and it still fits on disk
+
+
+def test_a_name_that_cannot_fit_is_cut_on_a_word_boundary():
+    title = " ".join(["word"] * 200)
+    name = _filename_for({"title": title, "authors": ["A"]}, M)
+    assert len(name.encode("utf-8")) <= 240
+    assert not name.endswith("wor")          # no chopped word
+
+
+def test_path_separators_cannot_escape_the_folder():
+    assert "/" not in _safe("Anna Karenina / War and Peace")
+    assert _safe("Vol 1: The Beginning") == "Vol 1 - The Beginning"
+
+
+def test_sort_name_leaves_an_existing_sort_form_alone():
+    assert _sort_name("Douglas Adams") == "Adams, Douglas"
+    assert _sort_name("Adams, Douglas") == "Adams, Douglas"
+    assert _sort_name("Homer") == "Homer"
+
+
+# -- recaps ----------------------------------------------------------------
+
+def test_manifest_parsing_does_not_depend_on_attribute_order():
+    """href-before-id is just as valid, and dropping those items silently
+    drops chapters out of the recap set."""
+    opf = ('<manifest>'
+           '<item id="a" href="a.xhtml" media-type="application/xhtml+xml"/>'
+           '<item href="b.xhtml" id="b" media-type="application/xhtml+xml"/>'
+           '<item media-type="application/xhtml+xml" href="c.xhtml" id="c"/>'
+           '</manifest>')
+    assert _manifest(opf) == {"a": "a.xhtml", "b": "b.xhtml", "c": "c.xhtml"}
+
+
+def test_a_recap_is_shown_a_chapter_behind_the_reader(tmp_path, monkeypatch):
+    """The rule that stops a recap spoiling the chapter being read."""
+    book = make_epub(tmp_path / "b.epub", chapters=4, words=900)
+    cfg = Config.load(None, {"source": tmp_path, "output": tmp_path / "o",
+                             "recaps.min_chars": 100, "recaps.lag_chapters": 1})
+
+    class FakeProvider:
+        def complete(self, prompt, system=None, **kw):
+            import re as _re
+            which = _re.search(r"Chapter (\d+)", prompt).group(1)
+            return type("R", (), {"text": "SUMMARY: things happened in %s.\n"
+                                          "CHARACTERS:\nAda - a tester" % which})()
+
+    ctx = context(cfg, book, tmp_path / "work", FakeProvider())
+    (tmp_path / "work").mkdir()
+    assert RecapStage().run(ctx).ok
+
+    with zipfile.ZipFile(book) as z:
+        rows = [r.split("\t") for r in
+                z.read("OEBPS/recaps.tsv").decode().splitlines()]
+    # chapter 1's recap is filed against spine position 1, not 0: a reader
+    # sitting in chapter 1 must not be handed chapter 1's ending
+    by_index = {int(i): s for i, _h, s in rows}
+    assert "in 1" in by_index[1]
+    assert 0 not in by_index
+
+
+def test_recaps_go_in_the_manifest_but_never_the_spine(tmp_path):
+    book = make_epub(tmp_path / "b.epub", chapters=2, words=800)
+    recaps_mod._embed(book, [(1, "c1.xhtml", "a summary")], [(1, "Ada", "a tester")])
+    with zipfile.ZipFile(book) as z:
+        opf = z.read("OEBPS/content.opf").decode()
+        assert "OEBPS/recaps.tsv" in z.namelist()
+    assert 'href="recaps.tsv"' in opf
+    assert "recaps-tsv" not in opf.split("<spine")[1]
+
+
+def test_a_character_is_introduced_at_first_appearance():
+    results = {
+        0: ("c1", "s", "Ada - a tester"),
+        2: ("c3", "s", "Ada - now revealed to be the villain\nBob - a friend"),
+    }
+    rows = _cast_rows(results)
+    assert (0, "Ada", "a tester") in rows          # the first description wins
+    assert (2, "Bob", "a friend") in rows
+    assert not any("villain" in r[2] for r in rows)
+
+
+def test_a_reply_without_a_summary_is_discarded():
+    assert _parse("I'm afraid I can't help with that.") == ("", "")
+
+
+def test_recaps_are_skipped_without_a_provider(tmp_path):
+    cfg = Config.load(None, {"source": tmp_path, "output": tmp_path / "o"})
+    ctx = context(cfg, tmp_path / "b.epub", tmp_path)
+    assert RecapStage().applies(ctx) is False
+
+
+# -- repair and validate ---------------------------------------------------
+
+def test_repair_promotes_the_package_to_epub3(tmp_path, epub):
+    cfg = Config.load(None, {"source": epub.parent, "output": tmp_path / "o"})
+    work = tmp_path / "work"
+    work.mkdir()
+    ctx = context(cfg, epub, work)
+    assert RepairStage().run(ctx).ok
+    with zipfile.ZipFile(epub) as z:
+        opf = z.read("OEBPS/content.opf").decode()
+    assert 'version="3.0"' in opf
+    assert "dcterms:modified" in opf
+
+
+def test_repair_keeps_every_document(tmp_path, epub):
+    before = {n for n in zipfile.ZipFile(epub).namelist()
+              if n.endswith(".xhtml")}
+    cfg = Config.load(None, {"source": epub.parent, "output": tmp_path / "o"})
+    work = tmp_path / "work"
+    work.mkdir()
+    RepairStage().run(context(cfg, epub, work))
+    after = {n for n in zipfile.ZipFile(epub).namelist() if n.endswith(".xhtml")}
+    assert before <= after
+
+
+def test_validate_reports_rather_than_failing_when_epubcheck_is_absent(
+        tmp_path, epub, monkeypatch):
+    from kobokit.tools import epubcheck_util as ec
+    monkeypatch.setattr(ec, "available", lambda: False)
+    cfg = Config.load(None, {"source": epub.parent, "output": tmp_path / "o"})
+    ctx = context(cfg, epub, tmp_path)
+    result = ValidateStage().run(ctx)
+    assert result.ok and result.message == "not checked"
+    assert any("unavailable" in n for n in ctx.record.notes)
+
+
+def test_a_book_with_errors_is_not_written_by_default(tmp_path, epub, monkeypatch):
+    from kobokit.tools import epubcheck_util as ec
+    monkeypatch.setattr(ec, "available", lambda: True)
+    monkeypatch.setattr(ec, "run", lambda *a, **k: [
+        {"severity": "ERROR", "code": "RSC-005", "message": "bad", "file": "x"}])
+    cfg = Config.load(None, {"source": epub.parent, "output": tmp_path / "o"})
+    assert ValidateStage().run(context(cfg, epub, tmp_path)).ok is False
+
+
+def test_accept_improvement_ships_a_book_that_got_better(tmp_path, epub, monkeypatch):
+    from kobokit.tools import epubcheck_util as ec
+    monkeypatch.setattr(ec, "available", lambda: True)
+    monkeypatch.setattr(ec, "run", lambda *a, **k: [
+        {"severity": "ERROR", "code": "RSC-005", "message": "bad", "file": "x"}])
+    cfg = Config.load(None, {"source": epub.parent, "output": tmp_path / "o",
+                             "validate.accept_improvement": True})
+    ctx = context(cfg, epub, tmp_path)
+    ctx.record.errors_before = 40
+    assert ValidateStage().run(ctx).ok is True
+
+
+# -- metadata, end to end --------------------------------------------------
+
+def test_the_book_own_metadata_is_actually_read(tmp_path, monkeypatch):
+    """The bundled tools take a folder, not a file. Handing them a file made
+    every book come out as "unresolved: title, authors" while the run still
+    reported success."""
+    from kobokit.stages.metadata import MetadataStage
+    book = make_epub(tmp_path / "src" / "download-xyz.epub", "The Real Title")
+    work = tmp_path / "work"
+    work.mkdir()
+    import shutil
+    staged = work / book.name
+    shutil.copy2(book, staged)
+
+    cfg = Config.load(None, {"source": book.parent, "output": tmp_path / "o",
+                             "metadata.use_ai_fallback": False})
+    ctx = context(cfg, staged, work)
+    monkeypatch.setattr("kobokit.stages.metadata.MetadataStage._catalogue",
+                        lambda self, *a: {})          # no network in a test
+    result = MetadataStage().run(ctx)
+
+    assert ctx.record.title == "The Real Title"
+    assert ctx.record.authors == "Ada Tester"
+    assert result.path.name == "The Real Title - Ada Tester.epub"
+    assert not any("unresolved" in n for n in ctx.record.notes)
+
+
+# -- ingest and convert ----------------------------------------------------
+
+def test_an_unrecognised_file_is_named_not_silently_dropped(tmp_path):
+    from kobokit.stages.ingest import IngestStage
+    odd = tmp_path / "something.cbz"
+    odd.write_bytes(b"x")
+    cfg = Config.load(None, {"source": tmp_path, "output": tmp_path / "o"})
+    result = IngestStage().run(context(cfg, odd, tmp_path))
+    assert result.ok is False and result.stop is True
+    assert ".cbz" in result.message
+
+
+def test_a_kepub_is_recognised_as_a_kepub(tmp_path):
+    from kobokit.stages.ingest import classify
+    plain = make_epub(tmp_path / "plain.epub")
+    assert classify(plain) == "epub"
+
+    kepub = tmp_path / "wrapped.epub"
+    import shutil
+    shutil.copy2(plain, kepub)
+    with zipfile.ZipFile(kepub, "a") as z:
+        z.writestr("OEBPS/k.xhtml",
+                   '<html><body><span class="koboSpan" id="kobo.1.1">x</span>'
+                   "</body></html>")
+    assert classify(kepub) == "kepub"
+
+
+pymupdf = pytest.importorskip("pymupdf", reason="the pdf extra is not installed")
+
+
+def test_a_text_pdf_is_reflowed_and_keeps_its_words(tmp_path):
+    from kobokit.stages.convert import ConvertStage
+    para = ("This is ordinary prose that runs on for long enough that the "
+            "page is routed as a novel rather than as a scan. ") * 12
+    doc = pymupdf.open()
+    for i in range(4):
+        page = doc.new_page()
+        page.insert_textbox(pymupdf.Rect(60, 60, 540, 760),
+                            "Chapter %d\n\n%s" % (i + 1, para), fontsize=11)
+    doc.set_metadata({"title": "A Paper Novel", "author": "Ada Tester"})
+    src = tmp_path / "scan.pdf"
+    doc.save(str(src))
+
+    cfg = Config.load(None, {"source": tmp_path, "output": tmp_path / "o"})
+    work = tmp_path / "work"
+    work.mkdir()
+    ctx = context(cfg, src, work)
+    ctx.meta["format_in"] = "pdf"
+    result = ConvertStage().run(ctx)
+
+    assert result.ok, result.message
+    assert result.path.suffix == ".epub"
+    assert ctx.meta["fixed_layout"] is False
+    with zipfile.ZipFile(result.path) as z:
+        import html as _html
+        import re as _re
+        text = " ".join(
+            _html.unescape(_re.sub(r"<[^>]+>", " ", z.read(n).decode("utf-8", "ignore")))
+            for n in z.namelist() if n.endswith((".xhtml", ".html")))
+    assert len(text.split()) > 800          # the prose actually came across

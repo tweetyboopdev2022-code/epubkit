@@ -1,0 +1,45 @@
+# kobokit.toml - copy this next to your library, or to
+# ~/.config/kobokit/kobokit.toml, and edit.
+#
+# API keys are NOT read from this file. Export them instead:
+#   export ANTHROPIC_API_KEY=...
+#   export OPENAI_API_KEY=...
+# A key written here is rejected, because a config file gets committed and an
+# environment variable does not.
+
+[paths]
+source = "~/Downloads/books"
+output = "~/Books/kobo"
+# work   = ""   # defaults to <output>/.kobokit-work
+# backup = ""   # defaults to <output>/.kobokit-originals, holds the originals
+
+[ai]
+provider = "ollama"              # ollama | anthropic | openai
+model    = "llama3.1:latest"
+endpoint = "http://localhost:11434"
+timeout  = 180
+concurrency = 2                  # chapters summarised at once
+
+[metadata]
+sources = ["openlibrary", "googlebooks"]
+use_ai_fallback = true           # model only fills what catalogues could not
+overwrite_existing = false       # never overwrite what the book already states
+# Full series name and full title, never abbreviated, however long it runs.
+filename_template   = "{series} {index:02d} - {title} - {authors}"
+standalone_template = "{title} - {authors}"
+
+[recaps]
+enabled = true
+min_chars = 2000                 # shorter than this is front matter
+lag_chapters = 1                 # never recap the chapter the reader is inside
+cast = true
+
+[validate]
+require_clean = true             # a book with errors is reported, not shipped
+accept_improvement = false       # ...unless it is better than what it replaced
+
+[run]
+stages = ["ingest", "convert", "metadata", "repair", "validate", "recaps", "report"]
+workers = 3
+continue_on_error = true
+resume = true
