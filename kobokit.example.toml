@@ -28,6 +28,15 @@ overwrite_existing = false       # never overwrite what the book already states
 filename_template   = "{series} {index:02d} - {title} - {authors}"
 standalone_template = "{title} - {authors}"
 
+[convert]
+# A landscape PDF page is nearly always a two-page spread photographed whole.
+# "auto" splits it into two pages when the pages are wide enough to be one;
+# "always" and "never" override that. Either way a page whose artwork runs
+# across the gutter is left whole.
+split_spreads = "auto"           # auto | always | never
+panel   = "1072x1448"            # device screen, for fixed-layout output
+jpeg_quality = 88
+
 [recaps]
 enabled = true
 min_chars = 2000                 # shorter than this is front matter

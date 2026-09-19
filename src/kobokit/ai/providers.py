@@ -1,7 +1,26 @@
 """The three backends, and the factory that picks one from config."""
 from __future__ import annotations
 
+import re
+
 from .base import AIError, AIUnavailable, Completion, Provider
+
+#: Reasoning models (qwen3, deepseek-r1 and friends) narrate their thinking
+#: inside these before answering. Left in place it corrupts every reply this
+#: tool parses: a stray brace in the reasoning breaks the metadata JSON, and
+#: the word SUMMARY appearing mid-thought derails a recap.
+THINK_RE = re.compile(r"<(think|thinking|reasoning)\b[^>]*>.*?</\1>",
+                      re.S | re.I)
+#: an unclosed block, which happens when the model is cut off mid-thought
+OPEN_THINK_RE = re.compile(r"<(think|thinking|reasoning)\b[^>]*>.*\Z", re.S | re.I)
+
+
+def strip_thinking(text: str) -> str:
+    if not text or "<" not in text:
+        return text
+    text = THINK_RE.sub("", text)
+    text = OPEN_THINK_RE.sub("", text)
+    return text.strip()
 
 
 class AnthropicProvider(Provider):
@@ -63,6 +82,13 @@ class OpenAIProvider(Provider):
 class OllamaProvider(Provider):
     name = "ollama"
 
+    #: Ask a reasoning model not to think out loud. Nothing here benefits from
+    #: it: these are short, mechanical summarising jobs, and the thinking costs
+    #: minutes a chapter on a local box. Older Ollama builds and models with no
+    #: thinking mode reject the field, so the first rejection turns it off for
+    #: the rest of the run rather than failing the book.
+    send_think_flag = True
+
     def _call(self, prompt, system):
         payload = {
             "model": self.model,
@@ -73,8 +99,18 @@ class OllamaProvider(Provider):
         }
         if system:
             payload["system"] = system
+        if self.send_think_flag:
+            payload["think"] = False
+
         data = self._post(self.endpoint + "/api/generate", payload, {})
         if "error" in data:
+            msg = str(data["error"])
+            if self.send_think_flag and "think" in msg.lower():
+                self.send_think_flag = False
+                payload.pop("think", None)
+                data = self._post(self.endpoint + "/api/generate", payload, {})
+                msg = str(data.get("error", ""))
+        if data.get("error"):
             msg = str(data["error"])
             # Ollama answers 200 with an error body when the model is absent
             if "not found" in msg.lower() or "try pulling" in msg.lower():
@@ -82,7 +118,16 @@ class OllamaProvider(Provider):
                     "ollama has no model %r. Run: ollama pull %s"
                     % (self.model, self.model))
             raise AIError("ollama: %s" % msg)
-        return Completion(data.get("response", ""),
+
+        # A model that thinks anyway - because the flag was refused, or because
+        # it simply ignores it - still has to come out the other side clean.
+        text = strip_thinking(data.get("response", ""))
+        if not text and data.get("thinking"):
+            # newer Ollama returns the reasoning in its own field; if that is
+            # all there is, the model answered with nothing but thought
+            raise AIError("%s replied with reasoning and no answer; try "
+                          "a larger model or a non-reasoning one" % self.model)
+        return Completion(text,
                           data.get("model", self.model),
                           data.get("prompt_eval_count"),
                           data.get("eval_count"))

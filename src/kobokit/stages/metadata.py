@@ -319,14 +319,45 @@ def _first_pages(book: Path, limit: int = 8000) -> str:
 
 
 def _json_from(text: str) -> dict:
-    """Models wrap JSON in prose and fences however firmly you ask them not to."""
+    """Models wrap JSON in prose and fences however firmly you ask them not to.
+
+    Scanning for the first brace and the last one looks obvious and is wrong:
+    a reasoning model that talks about the answer before giving it, or any
+    model that offers a second example, leaves braces on both sides and the
+    span between them is not JSON. Each balanced object is tried instead,
+    last first, since the model's final word is its answer.
+    """
     if not text:
         return {}
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        return {}
-    try:
-        data = json.loads(m.group(0))
-        return data if isinstance(data, dict) else {}
-    except json.JSONDecodeError:
-        return {}
+    candidates = []
+    depth = start = 0
+    in_string = escaped = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                candidates.append(text[start:i + 1])
+            elif depth < 0:
+                depth = 0
+    for blob in reversed(candidates):
+        try:
+            data = json.loads(blob)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and "title" in data:
+            return data
+    return {}
