@@ -119,3 +119,57 @@ def test_factory_builds_each(provider, cls, monkeypatch):
 def test_factory_rejects_unknown():
     with pytest.raises(AIError, match="unknown provider"):
         build(AIConfig(provider="nope"))
+
+
+# -- reasoning models ------------------------------------------------------
+
+def test_thinking_is_stripped_from_the_answer(monkeypatch):
+    """qwen3 and friends narrate before answering; the narration must not
+    reach a parser that is looking for SUMMARY: or for JSON."""
+    p = OllamaProvider("qwen3:8b", "http://localhost:11434")
+    monkeypatch.setattr(p, "_post", lambda *a: {
+        "response": "<think>The user wants a SUMMARY: maybe {not: json}</think>\n"
+                    "SUMMARY: Ada found the door.",
+        "model": "qwen3:8b"})
+    assert p.complete("x").text == "SUMMARY: Ada found the door."
+
+
+def test_an_unclosed_thought_is_still_removed(monkeypatch):
+    p = OllamaProvider("qwen3:8b", "http://localhost:11434")
+    monkeypatch.setattr(p, "_post", lambda *a: {
+        "response": "SUMMARY: Ada left.\n<think>but wait, was it Ada or"})
+    assert p.complete("x").text == "SUMMARY: Ada left."
+
+
+def test_thinking_is_turned_off_in_the_request(monkeypatch):
+    seen = {}
+    p = OllamaProvider("qwen3:8b", "http://localhost:11434")
+    monkeypatch.setattr(p, "_post",
+                        lambda u, pl, h: seen.update(pl) or {"response": "ok"})
+    p.complete("x")
+    assert seen["think"] is False
+
+
+def test_a_refused_think_flag_is_dropped_and_retried(monkeypatch):
+    """Older Ollama builds reject the field. That must not fail the book."""
+    calls = []
+
+    def fake(url, payload, headers):
+        calls.append(dict(payload))
+        if "think" in payload:
+            return {"error": "model does not support thinking"}
+        return {"response": "recovered"}
+
+    p = OllamaProvider("llama3.1:latest", "http://localhost:11434")
+    monkeypatch.setattr(p, "_post", fake)
+    assert p.complete("x").text == "recovered"
+    assert len(calls) == 2
+    assert p.send_think_flag is False          # and not tried again
+
+
+def test_nothing_but_thinking_is_an_error_not_an_empty_recap(monkeypatch):
+    p = OllamaProvider("qwen3:8b", "http://localhost:11434")
+    monkeypatch.setattr(p, "_post", lambda *a: {"response": "",
+                                                "thinking": "hmm, hmm, hmm"})
+    with pytest.raises(AIError, match="reasoning and no answer"):
+        p.complete("x", retries=1)
