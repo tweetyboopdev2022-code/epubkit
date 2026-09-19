@@ -470,3 +470,68 @@ def test_a_file_merely_named_epub_is_not_an_epub(tmp_path):
 def test_a_real_epub_still_validates(epub):
     from kobokit.stages.validate import is_epub
     assert is_epub(epub) is True
+
+
+# -- block elements inside inline ones --------------------------------------
+
+def test_a_div_inside_a_span_is_unwrapped():
+    """Calibre wraps a page in <span class="underline"> and puts the page-break
+    <div> inside it. No EPUB version accepts that, so promoting the package
+    cannot fix it - the markup has to be repaired."""
+    from kobokit.tools.fix_epub3 import unwrap_inline_around_block
+    src = (b'<body><span class="underline"><span><div class="c5">'
+           b'<div class="pb" id="p0"></div><br/></div></span></span>'
+           b'<p>Real text</p></body>')
+    out, n = unwrap_inline_around_block(src)
+    assert n == 2                                  # both spans went
+    assert b"<span" not in out
+    assert b'<div class="c5">' in out              # the divs stayed
+    assert b"Real text" in out                     # and so did the text
+
+
+def test_a_div_inside_a_p_becomes_a_div_not_a_deletion():
+    """A <p> carries the paragraph's styling, so it is retagged rather than
+    unwrapped - <div> holds the same content legally."""
+    from kobokit.tools.fix_epub3 import unwrap_inline_around_block
+    src = b'<p class="calibre7"><div class="c3"><img src="x.jpg"/></div></p>'
+    out, n = unwrap_inline_around_block(src)
+    assert n == 1
+    assert b'<div class="calibre7">' in out        # the class survives
+    assert out.count(b"</div>") == 2
+    assert b"<p" not in out
+    assert b'<img src="x.jpg"/>' in out
+
+
+def test_healthy_markup_is_left_exactly_alone():
+    from kobokit.tools.fix_epub3 import unwrap_inline_around_block
+    for good in (
+        b'<p>Plain <span class="bold">emphasis</span> and more.</p>',
+        b'<div><p>A paragraph</p><p>And another</p></div>',
+        b'<p><a href="x.html"><img src="i.jpg" alt=""/></a></p>',
+        b'<body><span>just inline</span></body>',
+    ):
+        out, n = unwrap_inline_around_block(good)
+        assert n == 0 and out == good
+
+
+def test_kobospans_are_never_unwrapped():
+    """A koboSpan is where the device's saved reading position points."""
+    from kobokit.tools.fix_epub3 import unwrap_inline_around_block
+    src = (b'<p><span class="koboSpan" id="kobo.1.1">Some words</span></p>')
+    out, n = unwrap_inline_around_block(src)
+    assert n == 0
+    assert b'id="kobo.1.1"' in out
+
+
+def test_nested_wrappers_all_come_off():
+    from kobokit.tools.fix_epub3 import unwrap_inline_around_block
+    src = b'<b><i><span><div>block</div></span></i></b>'
+    out, _ = unwrap_inline_around_block(src)
+    assert out == b'<div>block</div>'
+
+
+def test_unclosed_tags_do_not_derail_it():
+    from kobokit.tools.fix_epub3 import unwrap_inline_around_block
+    src = b'<p><span><div>x</div><p>y</p>'
+    out, _ = unwrap_inline_around_block(src)
+    assert b"x" in out and b"y" in out

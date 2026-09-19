@@ -618,6 +618,81 @@ EMPTY_TITLE_RE = re.compile(
     rb"<title(?:\s[^>/]*)?/>|<title(?:\s[^>]*)?>\s*</title>", re.I)
 
 
+#: Elements that may not appear inside a phrasing-only element. A converter
+#: that wraps a whole page in <span class="underline"> and then drops the
+#: page-break <div> inside it produces markup no EPUB version accepts, so
+#: promoting the package cannot fix it.
+BLOCK_IN_INLINE = (b"div", b"p", b"h1", b"h2", b"h3", b"h4", b"h5", b"h6",
+                   b"table", b"ul", b"ol", b"dl", b"blockquote", b"hr",
+                   b"pre", b"section", b"article", b"aside", b"figure")
+INLINE_WRAPPERS = (b"span", b"a", b"b", b"i", b"em", b"strong", b"small",
+                   b"sub", b"sup", b"u", b"cite", b"code", b"label")
+#: Blocks that may only hold phrasing content. These are not unwrapped -
+#: they carry the paragraph's styling and structure - they become <div>,
+#: which holds the same content legally.
+PHRASING_ONLY_BLOCKS = (b"p", b"h1", b"h2", b"h3", b"h4", b"h5", b"h6")
+_TAG_SCAN = re.compile(rb"<(/?)([A-Za-z][-\w:.]*)([^>]*?)(/?)>")
+
+
+def unwrap_inline_around_block(data):
+    """Remove an inline wrapper that has a block element inside it.
+
+    Only the wrapper's own tags go; every byte between them is kept, so the
+    text, the images and any koboSpans inside are untouched. The wrapper was
+    carrying styling at most, and styling that could never render as written.
+    """
+    stack = []          # [start, end, name, has_block, kind]
+    edits = []          # (start, end, replacement)
+    for mo in _TAG_SCAN.finditer(data):
+        closing, name, attrs, selfclose = mo.groups()
+        low = name.lower()
+        if selfclose:
+            continue
+        if not closing:
+            if low in INLINE_WRAPPERS:
+                stack.append([mo.start(), mo.end(), low, False, "unwrap"])
+                continue
+            if low in PHRASING_ONLY_BLOCKS:
+                stack.append([mo.start(), mo.end(), low, False, "retag"])
+                continue
+            if low in BLOCK_IN_INLINE:
+                for frame in stack:
+                    frame[3] = True          # every wrapper still open is bad
+        else:
+            for i in range(len(stack) - 1, -1, -1):
+                if stack[i][2] == low:
+                    frame = stack.pop(i)
+                    del stack[i:]            # anything left unclosed inside
+                    if frame[3]:
+                        if frame[4] == "unwrap":
+                            edits.append((frame[0], frame[1], b""))
+                            edits.append((mo.start(), mo.end(), b""))
+                        else:
+                            # <p class="x"> -> <div class="x">, keeping the
+                            # styling and the structure, losing the violation
+                            edits.append((frame[0], frame[1],
+                                          b"<div" + attrs_of(data, frame) +
+                                          b">"))
+                            edits.append((mo.start(), mo.end(), b"</div>"))
+                    break
+
+    if not edits:
+        return data, 0
+    out, last = [], 0
+    for start, end, repl in sorted(edits):
+        out.append(data[last:start])
+        out.append(repl)
+        last = end
+    out.append(data[last:])
+    return b"".join(out), len(edits) // 2
+
+
+def attrs_of(data, frame):
+    """The attribute text of an open tag already located in `data`."""
+    mo = _TAG_SCAN.match(data, frame[0])
+    return mo.group(3) if mo else b""
+
+
 def fix_content(data, book_title=None):
     """Doctype, namespaces, obsolete attributes. Returns (data, notes)."""
     notes = []
@@ -638,6 +713,12 @@ def fix_content(data, book_title=None):
         return b""
 
     data = HTTP_EQUIV_ANY_RE.sub(_he, data)
+
+    # a block element inside an inline one is invalid in every EPUB version,
+    # so this has to be repaired rather than declared away
+    data, unwrapped = unwrap_inline_around_block(data)
+    if unwrapped:
+        notes.append("block-in-inline")
 
     # named entities must go numeric BEFORE the DTD-bearing doctype is dropped
     nd = numericise_entities(data)
