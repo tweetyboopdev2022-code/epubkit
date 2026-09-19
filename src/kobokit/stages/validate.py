@@ -10,9 +10,25 @@ decides whether that stops it reaching the output folder.
 """
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 
 from .base import Context, Stage, StageResult
+
+
+def is_epub(path: Path) -> bool:
+    """A zip whose mimetype entry says EPUB - not merely a file named .epub.
+
+    EPUBCheck hands back "clean" for input it does not recognise as a book at
+    all, so a PDF passes validation without a word. A pass that means "I could
+    not find anything wrong with this file I never read" is worse than no
+    check, because it reads exactly like a real one.
+    """
+    try:
+        with zipfile.ZipFile(path) as z:
+            return z.read("mimetype").strip() == b"application/epub+zip"
+    except (zipfile.BadZipFile, OSError, KeyError):
+        return False
 
 
 class ValidateStage(Stage):
@@ -23,6 +39,17 @@ class ValidateStage(Stage):
         from .inspect import detect_omnibus
 
         book = ctx.path
+        if not is_epub(book):
+            # Reached when the convert stage was skipped, or a conversion was
+            # never asked for. Saying "ok" here would be a lie.
+            kind = ctx.meta.get("format_in") or book.suffix.lstrip(".") or "file"
+            ctx.note("not an EPUB (%s), so there is nothing to validate" % kind)
+            ctx.record.not_applicable("epubcheck", "%s, not an epub" % kind)
+            return StageResult(
+                ok=False, stop=True,
+                message="still a %s - run the convert stage to turn it into "
+                        "a book first" % kind)
+
         detect_omnibus(ctx, book)
         if not ec.available():
             # A missing validator is a setup problem, not a broken book, and
