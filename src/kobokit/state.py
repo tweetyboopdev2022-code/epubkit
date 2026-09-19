@@ -59,11 +59,24 @@ class BookRecord:
     errors_after: int | None = None
     recaps: int | None = None
     notes: list[str] = field(default_factory=list)
+    #: structural problems verify_epubs found, separate from EPUBCheck's
+    structural: list[str] = field(default_factory=list)
+    #: titles of the books inside, when this file holds more than one
+    omnibus: list[str] = field(default_factory=list)
+    #: tool -> ran | skipped: <why it did not apply>. A step that quietly
+    #: does nothing is the failure mode this exists to make visible.
+    tools: dict[str, str] = field(default_factory=dict)
     message: str = ""
     seconds: float = 0.0
 
     def mark(self, stage: str, outcome: str) -> None:
         self.stages[stage] = outcome
+
+    def ran(self, tool: str, detail: str = "ran") -> None:
+        self.tools[tool] = detail
+
+    def not_applicable(self, tool: str, why: str) -> None:
+        self.tools[tool] = "n/a: " + why
 
 
 class RunState:

@@ -10,6 +10,8 @@ decides whether that stops it reaching the output folder.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from .base import Context, Stage, StageResult
 
 
@@ -18,15 +20,19 @@ class ValidateStage(Stage):
 
     def run(self, ctx: Context) -> StageResult:
         from ..tools import epubcheck_util as ec
+        from .inspect import detect_omnibus
 
         book = ctx.path
+        detect_omnibus(ctx, book)
         if not ec.available():
             # A missing validator is a setup problem, not a broken book, and
             # must not fail every title in the batch.
             ctx.note("EPUBCheck unavailable, skipping validation")
+            _structural_check(ctx, book, None)
             return StageResult(message="not checked")
 
         results = ec.run(str(book), timeout=ctx.config.validate.timeout)
+        _structural_check(ctx, book, results)
         errors = [e for e in (results or [])
                   if e["severity"] in ("FATAL", "ERROR")]
         warnings = [e for e in (results or []) if e["severity"] == "WARNING"]
@@ -53,3 +59,43 @@ class ValidateStage(Stage):
 def _improved(ctx: Context) -> bool:
     before, after = ctx.record.errors_before, ctx.record.errors_after
     return (before is not None and after is not None and after < before)
+
+
+def _structural_check(ctx: Context, book: Path, epubcheck_results) -> None:
+    """verify_epubs: zip integrity, mimetype placement, OPF and spine sanity.
+
+    Different questions from EPUBCheck's. EPUBCheck asks whether the book
+    obeys the spec; this asks whether the archive is put together the way a
+    reader expects to find it - the mimetype stored first and uncompressed,
+    the spine pointing at files that exist, no dangling internal links.
+    """
+    try:
+        from ..tools import verify_epubs
+    except ImportError:                                     # pragma: no cover
+        return
+    # verify_epubs runs EPUBCheck itself, which this stage has already done.
+    # Running a JVM twice per book doubles the cost of the slowest step in the
+    # pipeline, so it is handed the results instead.
+    real = verify_epubs.epubcheck_util
+
+    class _Cached:
+        run = staticmethod(lambda *a, **k: epubcheck_results)
+        summarize = staticmethod(real.summarize)
+
+    verify_epubs.epubcheck_util = _Cached
+    try:
+        problems, info = verify_epubs.check(str(book))
+    except Exception as exc:                                # noqa: BLE001
+        ctx.note("structural check could not run: %s" % str(exc)[:100])
+        return
+    finally:
+        verify_epubs.epubcheck_util = real
+
+    # EPUBCheck findings are reported by the stage itself; no need twice
+    structural = [p for p in problems if not p.startswith("epubcheck ")]
+    if structural:
+        ctx.note("structure: %s" % "; ".join(structural[:4]))
+        ctx.record.structural = structural
+    if info.get("dangling"):
+        ctx.note("structure: %d internal link(s) point at files that are not "
+                 "in the book" % info["dangling"])

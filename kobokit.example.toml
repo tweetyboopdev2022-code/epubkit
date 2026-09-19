@@ -33,7 +33,17 @@ standalone_template = "{title} - {authors}"
 # "auto" splits it into two pages when the pages are wide enough to be one;
 # "always" and "never" override that. Either way a page whose artwork runs
 # across the gutter is left whole.
-split_spreads = "auto"           # auto | always | never
+split_spreads = "auto"           # auto | always | never | force
+                                 # "force" cuts every wide page down the
+                                 # middle. Use it for a picture book whose
+                                 # illustrations all run across the spread,
+                                 # where the gutter check keeps every page
+                                 # whole and nothing gets split.
+kepub   = true                   # wrap text in koboSpans: page numbers,
+                                 # statistics and a position the Kobo keeps
+slim_above_mb = 25.0             # recompress books bigger than this; 0 = off
+detect_omnibus = true            # say when a file holds several books
+make_missing_covers = true       # plain cover when there is no art at all
 panel   = "1072x1448"            # device screen, for fixed-layout output
 jpeg_quality = 88
 

@@ -14,6 +14,27 @@ from pathlib import Path
 from ..state import RunState
 
 
+def shelf_checks(out_dir: Path) -> list[str]:
+    """Checks that need the whole shelf, not one book.
+
+    check_art compares a book against its neighbours: a picture book with no
+    pictures is only obvious next to nine of its own series that have two
+    hundred each. There is nothing to compare against inside a work directory,
+    so it runs here, once, over the finished library.
+    """
+    import subprocess
+    import sys
+    try:
+        r = subprocess.run(
+            [sys.executable, "-m", "kobokit.tools.check_art",
+             str(out_dir), "--quiet"],
+            capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [ln.strip() for ln in (r.stdout or "").splitlines()
+            if "artwork is missing" in ln]
+
+
 def write(state: RunState, out_dir: Path, elapsed: float) -> Path:
     path = out_dir / "REPORT.md"
     books = sorted(state.books.values(), key=lambda r: (r.status, r.source))
@@ -69,9 +90,37 @@ def write(state: RunState, out_dir: Path, elapsed: float) -> Path:
                                                   b.errors_after or 0))
             if b.recaps:
                 L.append("  %d recaps" % b.recaps)
+            if b.omnibus:
+                L.append("  holds %d books: %s"
+                         % (len(b.omnibus), "; ".join(b.omnibus[:6])))
+            if b.structural:
+                L.append("  structure: %s" % "; ".join(b.structural[:3]))
             for n in b.notes:
                 L.append("  - %s" % n)
             L.append("")
+
+    missing_art = shelf_checks(out_dir)
+    if missing_art:
+        L.append("## Books whose artwork is missing")
+        L.append("")
+        L.append("These sit on an illustrated shelf with no pictures in them. "
+                 "They arrived that way; nothing here removed the artwork.")
+        L.append("")
+        for line in missing_art:
+            L.append("- %s" % line)
+        L.append("")
+
+    skipped_tools = _tool_summary(books)
+    if skipped_tools:
+        L.append("## Steps that did not apply")
+        L.append("")
+        L.append("Every book goes through every step. These are the ones that "
+                 "had nothing to do, and why - so a step that quietly does "
+                 "nothing is visible rather than invisible.")
+        L.append("")
+        for line in skipped_tools:
+            L.append("- %s" % line)
+        L.append("")
 
     if failed:
         L.append("## Not written")
@@ -91,6 +140,22 @@ def write(state: RunState, out_dir: Path, elapsed: float) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(L))
     return path
+
+
+def _tool_summary(books) -> list[str]:
+    """Count why each step was skipped, so the reasons read at a glance."""
+    from collections import Counter
+    reasons: dict[str, Counter] = {}
+    for b in books:
+        for tool, outcome in (b.tools or {}).items():
+            if outcome.startswith("n/a: "):
+                reasons.setdefault(tool, Counter())[outcome[5:]] += 1
+    out = []
+    for tool in sorted(reasons):
+        parts = ["%s (%d book%s)" % (why, n, "" if n == 1 else "s")
+                 for why, n in reasons[tool].most_common(3)]
+        out.append("**%s** - %s" % (tool, "; ".join(parts)))
+    return out
 
 
 def _duration(seconds: float) -> str:

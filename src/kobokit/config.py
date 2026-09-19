@@ -46,7 +46,7 @@ DEFAULT_ENDPOINT = {
     "ollama": "http://localhost:11434",
 }
 
-ALL_STAGES = ("ingest", "convert", "metadata", "repair", "validate",
+ALL_STAGES = ("ingest", "convert", "metadata", "repair", "kepub", "validate",
               "recaps", "report")
 
 
@@ -140,6 +140,15 @@ class ConvertConfig:
     #: and the splitter still leaves a page whole where artwork crosses the
     #: gutter.
     split_spreads: str = "auto"
+    #: convert finished books to kepub, which is what gives a Kobo page
+    #: numbers, reading statistics and a reliable saved position
+    kepub: bool = True
+    #: recompress images in books above this size, in MB. 0 turns it off.
+    slim_above_mb: float = 25.0
+    #: look for omnibuses and say so in the report; splitting stays manual
+    detect_omnibus: bool = True
+    #: fill in a plain typographic cover when a book has none
+    make_missing_covers: bool = True
     #: device panel for fixed-layout output, WxH
     panel: str = "1072x1448"
     jpeg_quality: int = 88
