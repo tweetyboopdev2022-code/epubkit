@@ -291,3 +291,86 @@ def test_a_text_pdf_is_reflowed_and_keeps_its_words(tmp_path):
             _html.unescape(_re.sub(r"<[^>]+>", " ", z.read(n).decode("utf-8", "ignore")))
             for n in z.namelist() if n.endswith((".xhtml", ".html")))
     assert len(text.split()) > 800          # the prose actually came across
+
+
+def test_json_is_taken_from_the_model_s_final_answer():
+    """A reasoning model leaves braces either side of the real answer; taking
+    everything between the first and the last one parses to nothing."""
+    from kobokit.stages.metadata import _json_from
+    reply = ('Let me think. The shape is {"title": "", "authors": [""]} as an '
+             'example.\n\nHere is the answer:\n'
+             '{"title": "Carrie", "authors": ["Stephen King"], '
+             '"series": null, "series_index": null}')
+    got = _json_from(reply)
+    assert got["title"] == "Carrie"
+    assert got["authors"] == ["Stephen King"]
+
+
+def test_json_with_braces_inside_a_string_is_still_read():
+    from kobokit.stages.metadata import _json_from
+    assert _json_from('{"title": "A Study in {Scarlet}", "authors": []}'
+                      )["title"] == "A Study in {Scarlet}"
+
+
+# -- two-page spreads ------------------------------------------------------
+
+def test_a_wide_pdf_is_split_into_single_pages(tmp_path):
+    """A landscape page in a picture book is a spread. Left whole, both pages
+    end up at half size on a six-inch screen."""
+    from kobokit.stages.convert import ConvertStage
+    doc = pymupdf.open()
+    for i in range(4):
+        page = doc.new_page(width=1400, height=800)       # 1.75:1
+        page.draw_rect(pymupdf.Rect(0, 0, 700, 800), color=None,
+                       fill=(0.92, 0.88, 0.78))
+        page.draw_rect(pymupdf.Rect(700, 0, 1400, 800), color=None,
+                       fill=(0.78, 0.86, 0.92))
+        page.insert_text((80, 120), "page %d" % (i * 2 + 1), fontsize=40)
+        page.insert_text((780, 120), "page %d" % (i * 2 + 2), fontsize=40)
+    doc.set_metadata({"title": "Wide Book", "author": "Ada Tester"})
+    src = tmp_path / "wide.pdf"
+    doc.save(str(src))
+
+    cfg = Config.load(None, {"source": tmp_path, "output": tmp_path / "o"})
+    work = tmp_path / "work"
+    work.mkdir()
+    ctx = context(cfg, src, work)
+    ctx.meta["format_in"] = "pdf"
+    result = ConvertStage().run(ctx)
+
+    assert result.ok, result.message
+    assert ctx.meta["fixed_layout"] is True
+    assert any("splitting" in n for n in ctx.record.notes)
+    with zipfile.ZipFile(result.path) as z:
+        opf = z.read([n for n in z.namelist() if n.endswith(".opf")][0]).decode()
+    import re as _re
+    assert len(_re.findall(r"<itemref", opf)) == 8        # 4 spreads -> 8 pages
+
+
+def test_split_spreads_never_overrides_a_no(tmp_path):
+    from kobokit.stages.convert import ConvertStage
+    doc = pymupdf.open()
+    for _ in range(2):
+        doc.new_page(width=1400, height=800)
+    src = tmp_path / "wide.pdf"
+    doc.save(str(src))
+
+    cfg = Config.load(None, {"source": tmp_path, "output": tmp_path / "o",
+                             "convert.split_spreads": "never"})
+    work = tmp_path / "work"
+    work.mkdir()
+    ctx = context(cfg, src, work)
+    ctx.meta["format_in"] = "pdf"
+    ConvertStage().run(ctx)
+    assert not any("splitting" in n for n in ctx.record.notes)
+    assert any("split_spreads" in n for n in ctx.record.notes)
+
+
+def test_a_portrait_pdf_is_not_split(tmp_path):
+    from kobokit.tools import pdf_route
+    doc = pymupdf.open()
+    for _ in range(3):
+        doc.new_page(width=800, height=1100)              # 0.73:1
+    src = tmp_path / "tall.pdf"
+    doc.save(str(src))
+    assert pdf_route.inspect(str(src))["spread"] is False

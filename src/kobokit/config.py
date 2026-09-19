@@ -133,6 +133,19 @@ class ValidateConfig:
 
 
 @dataclass
+class ConvertConfig:
+    #: auto | always | never. A landscape PDF page is nearly always a
+    #: two-page spread; split, it reads as two pages on a six-inch screen.
+    #: "auto" asks the PDF and splits only pages wide enough to be spreads,
+    #: and the splitter still leaves a page whole where artwork crosses the
+    #: gutter.
+    split_spreads: str = "auto"
+    #: device panel for fixed-layout output, WxH
+    panel: str = "1072x1448"
+    jpeg_quality: int = 88
+
+
+@dataclass
 class RunConfig:
     stages: tuple[str, ...] = ALL_STAGES
     workers: int = 3
@@ -149,6 +162,7 @@ class Config:
     paths: PathsConfig = field(default_factory=PathsConfig)
     ai: AIConfig = field(default_factory=AIConfig)
     metadata: MetadataConfig = field(default_factory=MetadataConfig)
+    convert: ConvertConfig = field(default_factory=ConvertConfig)
     recaps: RecapConfig = field(default_factory=RecapConfig)
     validate: ValidateConfig = field(default_factory=ValidateConfig)
     run: RunConfig = field(default_factory=RunConfig)
@@ -206,6 +220,7 @@ class Config:
             paths=p,
             ai=_fill(AIConfig, self.ai, raw.get("ai", {})),
             metadata=_fill(MetadataConfig, self.metadata, raw.get("metadata", {})),
+            convert=_fill(ConvertConfig, self.convert, raw.get("convert", {})),
             recaps=_fill(RecapConfig, self.recaps, raw.get("recaps", {})),
             validate=_fill(ValidateConfig, self.validate, raw.get("validate", {})),
             run=_fill(RunConfig, self.run, raw.get("run", {})),
@@ -214,8 +229,8 @@ class Config:
     def _merge_env(self) -> Config:
         """KOBOKIT_AI_PROVIDER, KOBOKIT_PATHS_OUTPUT, and so on."""
         sections = {"ai": self.ai, "metadata": self.metadata,
-                    "recaps": self.recaps, "validate": self.validate,
-                    "run": self.run}
+                    "convert": self.convert, "recaps": self.recaps,
+                    "validate": self.validate, "run": self.run}
         out: dict[str, Any] = {}
         for name, obj in sections.items():
             updates = {}
@@ -250,7 +265,7 @@ class Config:
               if k in ("source", "output", "work", "backup") and v is not None}
         if pu:
             cfg = replace(cfg, paths=replace(cfg.paths, **pu))
-        for section in ("ai", "metadata", "recaps", "validate", "run"):
+        for section in ("ai", "metadata", "convert", "recaps", "validate", "run"):
             updates = {k.split(".", 1)[1]: v for k, v in o.items()
                        if k.startswith(section + ".") and v is not None}
             if updates:
