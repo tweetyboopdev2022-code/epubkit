@@ -36,14 +36,42 @@ STAGE_CLASSES = {
 BOOK_SUFFIXES = (".epub", ".pdf", ".mobi", ".azw", ".azw3", ".fb2", ".zip")
 
 
-def find_books(root: Path) -> list[Path]:
+def find_books(root: Path, exclude=()) -> list[Path]:
+    """Books under `root`, skipping anything inside an excluded directory.
+
+    The exclusions matter more than they look. Putting the library inside the
+    folder of downloads is an entirely reasonable thing to want, and without
+    this the run walks into its own output, treats every finished book as a
+    new arrival, and converts what it already converted - growing each time it
+    runs.
+    """
+    blocked = []
+    for d in exclude:
+        if not d:
+            continue
+        try:
+            blocked.append(Path(d).resolve())
+        except OSError:
+            continue
+
+    def inside_excluded(path: Path) -> bool:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return False
+        return any(resolved == b or b in resolved.parents for b in blocked)
+
     out = []
     for p in sorted(root.rglob("*")):
         if not p.is_file() or p.name.startswith("._") or p.name.startswith("."):
             continue
-        low = p.name.lower()
-        if low.endswith(BOOK_SUFFIXES):
-            out.append(p)
+        if any(part.startswith(".") for part in p.relative_to(root).parts[:-1]):
+            continue
+        if not p.name.lower().endswith(BOOK_SUFFIXES):
+            continue
+        if inside_excluded(p):
+            continue
+        out.append(p)
     return out
 
 
@@ -63,8 +91,12 @@ class Pipeline:
         work_root.mkdir(parents=True, exist_ok=True)
 
         state = RunState(work_root / "kobokit-state.json")
-        books = find_books(cfg.paths.source)
+        books = find_books(cfg.paths.source,
+                           exclude=(out, work_root, cfg.paths.backup))
         self.log.info("%d book(s) found in %s", len(books), cfg.paths.source)
+        if _is_inside(out, cfg.paths.source):
+            self.log.info("(the library is inside the source folder, so what "
+                          "is already in %s is left out)", out.name)
 
         todo = [b for b in books if not state.should_skip(b, cfg.run.resume)]
         todo_set = set(todo)
@@ -152,6 +184,14 @@ class Pipeline:
             state.update(rec)
             if not cfg.run.verbose:
                 shutil.rmtree(work, ignore_errors=True)
+
+
+def _is_inside(inner: Path, outer: Path) -> bool:
+    try:
+        inner, outer = inner.resolve(), outer.resolve()
+    except OSError:
+        return False
+    return outer in inner.parents
 
 
 def _slug(name: str) -> str:
