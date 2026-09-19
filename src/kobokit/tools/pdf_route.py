@@ -59,6 +59,12 @@ def clean_author(raw):
     return a
 
 
+#: width:height at or above which a page is treated as a two-page spread.
+#: A single printed page is portrait (about 0.7:1); two of them side by side
+#: land near 1.4:1. 1.2 sits clear of both square-ish and portrait pages.
+SPREAD_ASPECT = 1.2
+
+
 def clean_title(raw):
     t = re.sub(r'\s+', ' ', (raw or '')).strip()
     t = re.sub(r'\s+:\s+', ': ', t)
@@ -86,14 +92,26 @@ def inspect(path, samples=24):
         idx = list(range(0, n, step))[:samples]
         chars = [len(doc[i].get_text().strip()) for i in idx]
         imgs = [len(doc[i].get_images(full=True)) for i in idx]
+        # A landscape page in a picture book is almost always a two-page
+        # spread: one sheet of the printed book photographed whole. Split, it
+        # reads as two portrait pages on a six-inch screen; unsplit, both
+        # pages are shrunk to half size and the text is unreadable.
+        ratios = []
+        for i in idx:
+            r = doc[i].rect
+            if r.height:
+                ratios.append(r.width / r.height)
         meta = dict(doc.metadata or {})
     title = clean_title(meta.get('title'))
     author = clean_author(meta.get('author'))
     f_title, f_author = from_filename(path)
+    aspect = statistics.median(ratios) if ratios else 1.0
     return {
         'pages': n,
         'chars': statistics.median(chars),
         'images': statistics.median(imgs),
+        'aspect': aspect,
+        'spread': aspect >= SPREAD_ASPECT,
         'title': title or f_title,
         'author': author or f_author,
     }
@@ -114,8 +132,12 @@ def main():
     if not a.quiet:
         print('%d pages, median %d chars and %d images a page -> %s'
               % (d['pages'], d['chars'], d['images'], route), file=sys.stderr)
+    if not a.quiet and d['spread']:
+        print('pages are %.2f:1 - wide enough to be two-page spreads'
+              % d['aspect'], file=sys.stderr)
     if a.meta:
-        print('%s\t%s\t%s' % (route, d['title'], d['author']))
+        print('%s\t%s\t%s\t%s' % (route, d['title'], d['author'],
+                                   'spread' if d['spread'] else 'single'))
     else:
         print(route)
 

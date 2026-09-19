@@ -48,6 +48,13 @@ Python itself:
 uv tool install --editable ".[full,pdf]"
 ```
 
+`kobokit doctor` tells you which of these you have, route by route, and
+`kobokit doctor --fix` installs the missing ones into whichever environment
+kobokit itself is running in — which matters, because a bare `pip` on your PATH
+often belongs to a different Python, and that is how you install something
+successfully and still get told it is missing. It always shows the command and
+asks first.
+
 ### EPUBCheck needs Java
 
 ```sh
@@ -89,14 +96,33 @@ command line tools: `xcode-select --install`.
 ## Use
 
 ```sh
-kobokit init                  # writes a starter kobokit.toml here
-$EDITOR kobokit.toml
-export ANTHROPIC_API_KEY=...  # only if you want recaps or AI metadata
-kobokit check                 # config, missing tools, and a live endpoint ping
+kobokit init      # asks a few questions and writes the config for you
+kobokit doctor    # checks the pieces are installed
+kobokit check     # confirms the config works and pings the model
 kobokit run
 ```
 
-or without a config file at all:
+`kobokit init` is a guided setup rather than a file to edit. It counts the
+books in the folder you give it, refuses a library folder that is the same as
+the source, and — for a local model — asks the server which models it actually
+has and lets you pick from that list, which is where a typed-from-memory model
+name usually goes wrong. `kobokit init --defaults` writes the example config
+without asking anything, for scripts.
+
+To change one setting afterwards, no editor needed:
+
+```sh
+kobokit config list                        # every setting and its value
+kobokit config get ai.model
+kobokit config set ai.model qwen3:8b
+kobokit config set convert.split_spreads always
+```
+
+Values are typed to match the setting, so `run.workers lots` is refused rather
+than quietly stored, and the comments in your config file survive the edit. An
+API key is refused outright — those belong in the environment.
+
+Or skip the config file entirely:
 
 ```sh
 kobokit run --in ~/Downloads/books --out ~/Books/kobo \
@@ -126,6 +152,13 @@ anything is modified. The originals are never edited in place.
 **convert** turns MOBI/AZW3, FB2, and PDF into EPUB. PDFs are routed first: a
 text PDF is reflowed, a scanned or comic PDF becomes a fixed-layout EPUB with
 the pages intact, because reflowing one of those produces garbage.
+
+Wide pages are split. A landscape page in a picture book is nearly always a
+two-page spread photographed whole, and left as one page it puts both halves
+at half size on a six-inch screen. kobokit measures the page shape, splits
+anything wide enough to be a spread, and still leaves a page whole where the
+artwork runs across the gutter — a bus driving through the middle of the book
+is one picture, not two. `convert.split_spreads` forces it on or off.
 
 **metadata** reads what the book already declares, checks Open Library and
 Google Books, and only then asks a model to fill what is still blank. It does

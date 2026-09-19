@@ -7,8 +7,10 @@ cannot change their font size and cannot be read comfortably.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
+from .. import deps
 from .base import Context, Stage, StageResult, run_tool
 
 
@@ -59,6 +61,7 @@ class ConvertStage(Stage):
         # digs a title and author out of the PDF, which a PDF rarely carries
         # properly - the metadata stage corrects both afterwards.
         route, title, author = "reflow", src.stem, "Unknown"
+        spread = False
         probe = run_tool("pdf_route", [str(src), "--meta", "--quiet"], timeout=300)
         if probe.returncode == 0 and probe.stdout.strip():
             parts = probe.stdout.strip().split("\t")
@@ -67,17 +70,41 @@ class ConvertStage(Stage):
                 title = parts[1].strip()
             if len(parts) > 2 and parts[2].strip():
                 author = parts[2].strip()
+            spread = len(parts) > 3 and parts[3].strip() == "spread"
         else:
             ctx.note("could not inspect the PDF; reflowing it")
         ctx.note("pdf routed as %s" % route)
 
         fixed = route == "fixed"
+        gone = deps.missing_for("pdf (fixed layout)" if fixed
+                                else "pdf (reflowed)")
+        if gone:
+            return StageResult(
+                ok=False,
+                message="cannot convert this %s pdf: %s"
+                        % (route, "; ".join(deps.advice(m) for m in gone)))
         module = "pdf2kepub" if fixed else "pdf2epub"
         name = src.stem + (".kepub.epub" if fixed else ".epub")
+        args = [str(src), "--out", str(out_dir), "--title", title,
+                "--author", author, "--filename", name]
+
+        if fixed:
+            setting = (ctx.config.convert.split_spreads or "auto").lower()
+            split = setting == "always" or (setting == "auto" and spread)
+            if split:
+                # the splitter judges each page for itself and leaves a spread
+                # whole where the artwork runs across the gutter
+                args.append("--split-spreads")
+                ctx.note("pages are wide enough to be two-page spreads; "
+                         "splitting them")
+            elif spread:
+                ctx.note("pages look like two-page spreads, but "
+                         "convert.split_spreads is %r" % setting)
+            args += ["--panel", ctx.config.convert.panel,
+                     "--quality", str(ctx.config.convert.jpeg_quality)]
+
         # PDFs are the slowest thing here by a wide margin
-        r = run_tool(module, [str(src), "--out", str(out_dir),
-                              "--title", title, "--author", author,
-                              "--filename", name], timeout=3600)
+        r = run_tool(module, args, timeout=3600)
         dst = out_dir / name
         if r.returncode != 0 or not dst.exists():
             return StageResult(ok=False,
@@ -90,6 +117,17 @@ class ConvertStage(Stage):
 
 
 def _tail(text: str | None, n: int = 240) -> str:
+    """The last line of a tool's output, unless a missing library explains it.
+
+    A bare "ModuleNotFoundError: No module named 'numpy'" repeated down a
+    whole batch says nothing about what to do next.
+    """
     if not text:
         return "no output"
-    return text.strip().splitlines()[-1][:n] if text.strip() else "no output"
+    text = text.strip()
+    if not text:
+        return "no output"
+    m = re.search(r"No module named ['\"]([A-Za-z0-9_.]+)['\"]", text)
+    if m:
+        return "missing library - " + deps.advice(m.group(1).split(".")[0])
+    return text.splitlines()[-1][:n]
