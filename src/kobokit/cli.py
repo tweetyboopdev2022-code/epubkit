@@ -46,7 +46,17 @@ standalone_template = "{title} - {authors}"
 # "auto" splits it into two pages when the pages are wide enough to be one;
 # "always" and "never" override that. Either way a page whose artwork runs
 # across the gutter is left whole.
-split_spreads = "auto"           # auto | always | never
+split_spreads = "auto"           # auto | always | never | force
+                                 # "force" cuts every wide page down the
+                                 # middle. Use it for a picture book whose
+                                 # illustrations all run across the spread,
+                                 # where the gutter check keeps every page
+                                 # whole and nothing gets split.
+kepub   = true                   # wrap text in koboSpans: page numbers,
+                                 # statistics and a position the Kobo keeps
+slim_above_mb = 25.0             # recompress books bigger than this; 0 = off
+detect_omnibus = true            # say when a file holds several books
+make_missing_covers = true       # plain cover when there is no art at all
 panel   = "1072x1448"            # device screen, for fixed-layout output
 jpeg_quality = 88
 
@@ -119,6 +129,15 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--provider", choices=("ollama", "anthropic", "openai"))
     r.add_argument("--model")
     r.add_argument("--endpoint")
+
+    sp = sub.add_parser("split", help="split an omnibus into one file per book")
+    sp.add_argument("book", type=Path)
+    sp.add_argument("--out", type=Path, help="where the parts go "
+                                             "(default: beside the omnibus)")
+    sp.add_argument("--plan", type=Path,
+                    help="a plan to use instead of working the boundaries out")
+    sp.add_argument("--apply", action="store_true",
+                    help="actually write the parts; without it, only the plan")
 
     cf = sub.add_parser("config", help="show or change one setting")
     cf.add_argument("action", choices=("get", "set", "list"))
@@ -213,6 +232,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "doctor":
         return _cmd_doctor(args)
+
+    if args.command == "split":
+        return _cmd_split(args)
 
     try:
         cfg = Config.load(getattr(args, "config", None), _overrides(args))
@@ -348,6 +370,52 @@ def _cmd_config(args, cfg: Config) -> int:
     except ConfigError as exc:
         print("%s" % exc, file=sys.stderr)
         return 2
+
+
+def _cmd_split(args) -> int:
+    """Work out where the books inside an omnibus start, then split on request.
+
+    Two steps on purpose. A wrong boundary produces a book missing its first
+    chapter and another with two, and neither announces itself - so the plan
+    is shown and only written out when asked for.
+    """
+    book = args.book.expanduser().resolve()
+    if not book.is_file():
+        print("no such book: %s" % book, file=sys.stderr)
+        return 2
+
+    out_dir = (args.out or book.parent).expanduser()
+    plan = args.plan or (out_dir / (book.stem + ".split.json"))
+
+    if not args.plan:
+        from .stages.base import run_tool
+        r = run_tool("plan_omnibus", [str(book), "--out", str(plan)],
+                     timeout=900)
+        print(r.stdout or r.stderr or "")
+        if r.returncode != 0:
+            return 1
+        if "no omnibus structure found" in (r.stdout or ""):
+            return 1
+        print("Plan written to %s. Read it, fix any boundary or title that is "
+              "wrong, then re-run with --plan %s --apply" % (plan, plan))
+        if not args.apply:
+            return 0
+
+    if not args.apply:
+        print("Nothing written. Add --apply to split it.")
+        return 0
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    from .stages.base import run_tool
+    r = run_tool("split_omnibus",
+                 [str(book), "--plan", str(plan), "--out", str(out_dir)],
+                 timeout=1800)
+    print(r.stdout or r.stderr or "")
+    if r.returncode != 0:
+        return 1
+    print("\nThe omnibus itself was not touched. Run kobokit on the parts to "
+          "give them metadata and covers of their own.")
+    return 0
 
 
 def _cmd_doctor(args) -> int:

@@ -16,6 +16,7 @@ from .stages import report as report_stage
 from .stages.base import Context
 from .stages.convert import ConvertStage
 from .stages.ingest import IngestStage
+from .stages.kepub import KepubStage
 from .stages.metadata import MetadataStage
 from .stages.recaps import RecapStage
 from .stages.repair import RepairStage
@@ -27,6 +28,7 @@ STAGE_CLASSES = {
     "convert": ConvertStage,
     "metadata": MetadataStage,
     "repair": RepairStage,
+    "kepub": KepubStage,
     "validate": ValidateStage,
     "recaps": RecapStage,
 }

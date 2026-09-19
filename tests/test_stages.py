@@ -374,3 +374,64 @@ def test_a_portrait_pdf_is_not_split(tmp_path):
     src = tmp_path / "tall.pdf"
     doc.save(str(src))
     assert pdf_route.inspect(str(src))["spread"] is False
+
+
+def test_force_splits_a_page_whose_art_crosses_the_gutter(tmp_path):
+    """The reported bug: the safety check keeps a spread whole when artwork
+    runs across the middle, so a book where every illustration does that gets
+    no pages split at all."""
+    from kobokit.stages.convert import ConvertStage
+    doc = pymupdf.open()
+    for i in range(4):
+        page = doc.new_page(width=1400, height=800)
+        page.draw_rect(pymupdf.Rect(0, 0, 1400, 800), color=None,
+                       fill=(0.95, 0.93, 0.85))
+        page.draw_rect(pymupdf.Rect(300, 300, 1100, 520), color=None,
+                       fill=(0.2, 0.35, 0.7))       # crosses the gutter
+        page.insert_text((80, 120), "p%d" % (i * 2 + 1), fontsize=36)
+    src = tmp_path / "gutter.pdf"
+    doc.save(str(src))
+
+    def spine_of(setting):
+        cfg = Config.load(None, {"source": tmp_path,
+                                 "output": tmp_path / ("o-" + setting),
+                                 "convert.split_spreads": setting})
+        work = tmp_path / ("w-" + setting)
+        work.mkdir()
+        ctx = context(cfg, src, work)
+        ctx.meta["format_in"] = "pdf"
+        res = ConvertStage().run(ctx)
+        assert res.ok, res.message
+        with zipfile.ZipFile(res.path) as z:
+            opf = z.read([n for n in z.namelist()
+                          if n.endswith(".opf")][0]).decode()
+        import re as _re
+        return len(_re.findall(r"<itemref", opf)), ctx.record.notes
+
+    auto_pages, auto_notes = spine_of("auto")
+    assert auto_pages == 4                     # every page kept whole
+    assert any("left whole" in n for n in auto_notes)   # and it says so
+
+    forced_pages, _ = spine_of("force")
+    assert forced_pages == 8                   # every spread cut in two
+
+
+def test_the_split_outcome_is_always_reported(tmp_path):
+    """Silence after 'splitting them' is how half a book stays in spreads."""
+    from kobokit.stages.convert import ConvertStage
+    doc = pymupdf.open()
+    for _ in range(3):
+        page = doc.new_page(width=1400, height=800)
+        page.draw_rect(pymupdf.Rect(0, 0, 700, 800), color=None,
+                       fill=(0.9, 0.87, 0.8))
+        page.draw_rect(pymupdf.Rect(700, 0, 1400, 800), color=None,
+                       fill=(0.8, 0.86, 0.9))
+    src = tmp_path / "w.pdf"
+    doc.save(str(src))
+    cfg = Config.load(None, {"source": tmp_path, "output": tmp_path / "o"})
+    work = tmp_path / "work"
+    work.mkdir()
+    ctx = context(cfg, src, work)
+    ctx.meta["format_in"] = "pdf"
+    ConvertStage().run(ctx)
+    assert any(n.startswith("spreads:") for n in ctx.record.notes)

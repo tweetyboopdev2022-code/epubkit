@@ -155,10 +155,16 @@ the pages intact, because reflowing one of those produces garbage.
 
 Wide pages are split. A landscape page in a picture book is nearly always a
 two-page spread photographed whole, and left as one page it puts both halves
-at half size on a six-inch screen. kobokit measures the page shape, splits
-anything wide enough to be a spread, and still leaves a page whole where the
-artwork runs across the gutter — a bus driving through the middle of the book
-is one picture, not two. `convert.split_spreads` forces it on or off.
+at half size on a six-inch screen. kobokit measures the page shape and splits
+anything wide enough to be a spread.
+
+By default a page is left whole where the artwork runs across the gutter — a
+bus driving through the middle of the book is one picture, not two. In a book
+where *every* illustration does that, though, the check protects every page
+and nothing gets split at all, so the run always reports how it went
+("spreads: 4 of 6 split, 2 left whole"). When the answer should have been all
+of them, `convert.split_spreads = "force"` cuts every wide page down the
+middle regardless.
 
 **metadata** reads what the book already declares, checks Open Library and
 Google Books, and only then asks a model to fill what is still blank. It does
@@ -174,6 +180,13 @@ survive. A book that loses a page does not get written, no matter how clean it
 validates. Kobo bookmarks point at span IDs, so a renamed span moves where the
 reader resumes — those IDs are never touched.
 
+**kepub** wraps the text in `koboSpan` elements, which is what gives a Kobo
+page numbers, reading statistics and a position it actually remembers — the
+device's `ChapterIDBookmarked` points straight at one of those spans. A book
+that arrived as a kepub is repaired rather than re-wrapped, because
+renumbering existing spans moves where the reader resumes. `convert.kepub =
+false` keeps everything as plain EPUB.
+
 **validate** runs EPUBCheck. By default a book with remaining errors is
 reported and not shipped; `--allow-imperfect` ships it when it is measurably
 better than what it replaced.
@@ -184,9 +197,26 @@ not to chapter numbers, so they survive a restructured book. A cast list tracks
 first appearances. The generated files go in the manifest, not the spine, so
 they never interrupt reading.
 
+Along the way the same pass does the smaller jobs: a plain typographic cover
+for a book with no artwork at all (never replacing real art), recompression
+for books bigger than `convert.slim_above_mb`, a structural check of the
+archive that asks different questions from EPUBCheck, and a cast list
+collapsed so one character is one person rather than three.
+
+A file that holds several books is detected and named in the report, not
+split — a wrong boundary produces a book missing its first chapter and another
+with two, and neither announces itself. `kobokit split BOOK.epub` works out
+the boundaries and shows you the plan; `--apply` writes the parts once you
+have read it.
+
 **report** writes per-book prose that says what was actually wrong with the
 book — not that a file was processed — and keeps damage the book arrived with
 separate from anything the pipeline introduced.
+
+Every book goes through every step. A step that has nothing to do says why in
+the report — "slim: under the threshold (12 books)", "plan_omnibus: too short
+to be a bundle (9 books)" — so a step that quietly does nothing is visible
+rather than invisible.
 
 ## Providers
 
