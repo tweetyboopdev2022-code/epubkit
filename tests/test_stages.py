@@ -291,3 +291,22 @@ def test_a_text_pdf_is_reflowed_and_keeps_its_words(tmp_path):
             _html.unescape(_re.sub(r"<[^>]+>", " ", z.read(n).decode("utf-8", "ignore")))
             for n in z.namelist() if n.endswith((".xhtml", ".html")))
     assert len(text.split()) > 800          # the prose actually came across
+
+
+def test_json_is_taken_from_the_model_s_final_answer():
+    """A reasoning model leaves braces either side of the real answer; taking
+    everything between the first and the last one parses to nothing."""
+    from kobokit.stages.metadata import _json_from
+    reply = ('Let me think. The shape is {"title": "", "authors": [""]} as an '
+             'example.\n\nHere is the answer:\n'
+             '{"title": "Carrie", "authors": ["Stephen King"], '
+             '"series": null, "series_index": null}')
+    got = _json_from(reply)
+    assert got["title"] == "Carrie"
+    assert got["authors"] == ["Stephen King"]
+
+
+def test_json_with_braces_inside_a_string_is_still_read():
+    from kobokit.stages.metadata import _json_from
+    assert _json_from('{"title": "A Study in {Scarlet}", "authors": []}'
+                      )["title"] == "A Study in {Scarlet}"
