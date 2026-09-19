@@ -435,3 +435,38 @@ def test_the_split_outcome_is_always_reported(tmp_path):
     ctx.meta["format_in"] = "pdf"
     ConvertStage().run(ctx)
     assert any(n.startswith("spreads:") for n in ctx.record.notes)
+
+
+def test_a_pdf_is_not_reported_as_a_clean_epub(tmp_path):
+    """EPUBCheck answers 'clean' for a file it does not recognise as a book,
+    so a PDF passed validation without a word. A pass that means 'I found
+    nothing wrong with a file I never read' is worse than no check."""
+    from kobokit.stages.validate import ValidateStage, is_epub
+    pdf = tmp_path / "book.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    assert is_epub(pdf) is False
+
+    cfg = Config.load(None, {"source": tmp_path, "output": tmp_path / "o"})
+    ctx = context(cfg, pdf, tmp_path)
+    result = ValidateStage().run(ctx)
+    assert result.ok is False
+    assert "still a pdf" in result.message
+    assert ctx.record.tools["epubcheck"].startswith("n/a")
+
+
+def test_a_file_merely_named_epub_is_not_an_epub(tmp_path):
+    from kobokit.stages.validate import is_epub
+    fake = tmp_path / "not-really.epub"
+    fake.write_bytes(b"this is not a zip")
+    assert is_epub(fake) is False
+
+    import zipfile as _z
+    wrong = tmp_path / "wrong-mimetype.epub"
+    with _z.ZipFile(wrong, "w") as z:
+        z.writestr("mimetype", "application/zip")
+    assert is_epub(wrong) is False
+
+
+def test_a_real_epub_still_validates(epub):
+    from kobokit.stages.validate import is_epub
+    assert is_epub(epub) is True
