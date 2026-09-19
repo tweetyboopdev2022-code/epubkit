@@ -41,6 +41,15 @@ overwrite_existing = false       # never overwrite what the book already states
 filename_template   = "{series} {index:02d} - {title} - {authors}"
 standalone_template = "{title} - {authors}"
 
+[convert]
+# A landscape PDF page is nearly always a two-page spread photographed whole.
+# "auto" splits it into two pages when the pages are wide enough to be one;
+# "always" and "never" override that. Either way a page whose artwork runs
+# across the gutter is left whole.
+split_spreads = "auto"           # auto | always | never
+panel   = "1072x1448"            # device screen, for fixed-layout output
+jpeg_quality = 88
+
 [recaps]
 enabled = true
 min_chars = 2000                 # shorter than this is front matter
@@ -75,7 +84,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version="kobokit " + __version__)
     sub = p.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("init", help="write a starter kobokit.toml here")
+    i = sub.add_parser("init", help="set up kobokit, answering a few questions")
+    i.add_argument("--defaults", action="store_true",
+                   help="write the example config without asking anything")
+    i.add_argument("-c", "--config", type=Path, dest="config",
+                   help="write somewhere other than ./kobokit.toml")
 
     for name, helptext in (("check", "validate the configuration and exit"),
                            ("run", "process a folder of books")):
@@ -106,6 +119,18 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--provider", choices=("ollama", "anthropic", "openai"))
     r.add_argument("--model")
     r.add_argument("--endpoint")
+
+    cf = sub.add_parser("config", help="show or change one setting")
+    cf.add_argument("action", choices=("get", "set", "list"))
+    cf.add_argument("key", nargs="?", help="e.g. ai.model")
+    cf.add_argument("value", nargs="?")
+    cf.add_argument("-c", "--config", type=Path)
+
+    d = sub.add_parser("doctor", help="check the optional pieces are installed")
+    d.add_argument("--fix", action="store_true",
+                   help="install what is missing into kobokit's own environment")
+    d.add_argument("-y", "--yes", action="store_true",
+                   help="do not ask before installing")
 
     v = sub.add_parser("validate", help="EPUBCheck a folder or a single book")
     v.add_argument("target", type=Path)
@@ -156,20 +181,38 @@ def _logger(verbose: bool) -> logging.Logger:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # `kobokit config list | head` should not end in a traceback
+    try:
+        import signal
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    except (ImportError, AttributeError, ValueError):
+        pass                                    # not POSIX, or not main thread
+
     args = build_parser().parse_args(argv)
 
     if args.command == "init":
-        target = Path.cwd() / CONFIG_NAME
-        if target.exists():
-            print("%s already exists; not overwriting it" % target)
+        target = args.config or (Path.cwd() / CONFIG_NAME)
+        if args.defaults:
+            if target.exists():
+                print("%s already exists; not overwriting it" % target)
+                return 1
+            target.write_text(EXAMPLE_CONFIG)
+            print("wrote %s" % target)
+            print("Edit paths.source and paths.output, then: kobokit check")
+            return 0
+        from .wizard import Cancelled
+        from .wizard import run as run_wizard
+        try:
+            return run_wizard(target)
+        except Cancelled:
+            print("\nStopped. Nothing was written.")
             return 1
-        target.write_text(EXAMPLE_CONFIG)
-        print("wrote %s" % target)
-        print("Edit paths.source and paths.output, then: kobokit check")
-        return 0
 
     if args.command == "validate":
         return _cmd_validate(args)
+
+    if args.command == "doctor":
+        return _cmd_doctor(args)
 
     try:
         cfg = Config.load(getattr(args, "config", None), _overrides(args))
@@ -179,8 +222,15 @@ def main(argv: list[str] | None = None) -> int:
 
     log = _logger(cfg.run.verbose)
 
+    if args.command == "config":
+        return _cmd_config(args, cfg)
+
     if args.command == "check":
+        from . import deps
         print(cfg.describe())
+        print()
+        for line in deps.report():
+            print("  " + line)
         problems = cfg.check(need_paths=False)
         if cfg.paths.source or cfg.paths.output:
             problems = cfg.check(need_paths=True)
@@ -259,6 +309,107 @@ def _cmd_recaps(args, cfg: Config, log) -> int:
         log.info("%s", n)
     shutil.rmtree(work, ignore_errors=True)
     return 0 if result.ok else 1
+
+
+def _cmd_config(args, cfg: Config) -> int:
+    from . import configedit as ce
+
+    if args.action == "list":
+        width = max(len(k) for k in ce.known_keys(cfg))
+        for key in ce.known_keys(cfg):
+            try:
+                value = ce.resolve(cfg, key)
+            except ConfigError:
+                continue
+            print("%-*s  %s" % (width, key,
+                                "-" if value is None else ce.render_value(value)))
+        print("\nconfig file: %s" % (cfg.source_file or "none yet"))
+        return 0
+
+    if not args.key:
+        print("which setting? `kobokit config list` shows them all",
+              file=sys.stderr)
+        return 2
+
+    try:
+        if args.action == "get":
+            value = ce.resolve(cfg, args.key)
+            print("-" if value is None else ce.render_value(value))
+            return 0
+
+        if args.value is None:
+            print("no value given. Try: kobokit config set %s VALUE" % args.key,
+                  file=sys.stderr)
+            return 2
+        path = ce.target_file(cfg, args.config)
+        written = ce.set_value(cfg, args.key, args.value, path)
+        print("%s  (in %s)" % (written, path))
+        return 0
+    except ConfigError as exc:
+        print("%s" % exc, file=sys.stderr)
+        return 2
+
+
+def _cmd_doctor(args) -> int:
+    from . import deps
+
+    print("kobokit can run:")
+    for line in deps.report():
+        print("  " + line)
+
+    missing = deps.missing_modules()
+    java = shutil.which("java")
+    if not missing and java:
+        print("\nEverything is in place.")
+        return 0
+
+    print()
+    for m in missing:
+        print("missing: %s" % deps.advice(m))
+    if not java:
+        print("missing: java, which EPUBCheck runs on. Without it books are "
+              "reported unvalidated rather than clean.")
+        print("         macOS: brew install --cask temurin")
+        print("         Debian/Ubuntu: sudo apt install default-jre")
+
+    if not missing:
+        return 1
+    cmd = deps.install_command(missing)
+    if not args.fix:
+        print("\nTo install the Python pieces: kobokit doctor --fix")
+        return 1
+
+    print("\nThis will run:\n  %s" % " ".join(cmd))
+    print("It installs into %s" % sys.executable)
+    if not args.yes:
+        try:
+            answer = input("Go ahead? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 1
+        if answer not in ("y", "yes"):
+            print("Left alone.")
+            return 1
+
+    import subprocess
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        print("\nThe install failed. The output above says why; a build error "
+              "in lxml on macOS usually wants: xcode-select --install",
+              file=sys.stderr)
+        return result.returncode
+
+    # re-check in a fresh process: a module installed into a running
+    # interpreter is not reliably importable in that same process
+    still = subprocess.run(
+        [sys.executable, "-c",
+         "from kobokit import deps; print(','.join(deps.missing_modules()))"],
+        capture_output=True, text=True).stdout.strip()
+    if still:
+        print("\nStill missing after the install: %s" % still)
+        return 1
+    print("\nDone. Everything kobokit needs is installed.")
+    return 0 if java else 1
 
 
 def _cmd_validate(args) -> int:

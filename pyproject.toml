@@ -26,8 +26,10 @@ dependencies = [
 
 [project.optional-dependencies]
 # lxml drives the EPUB3 rewriter; epubcheck is the real validator.
-full = ["lxml>=4.9", "epubcheck>=5.0"]
-pdf  = ["pymupdf>=1.23", "pillow>=10.0"]
+full = ["lxml>=4.9", "epubcheck>=5.0", "pillow>=10.0"]
+# numpy is not optional within this extra: the fixed-layout path crops every
+# page, and the cropper works on arrays.
+pdf  = ["pymupdf>=1.23", "pillow>=10.0", "numpy>=1.24"]
 mobi = ["mobi>=0.3"]
 dev  = ["pytest>=7", "pytest-cov", "ruff"]
 
