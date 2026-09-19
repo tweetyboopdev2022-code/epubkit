@@ -100,6 +100,8 @@ class RecapStage(Stage):
             rows.append((shown_at, href, summary))
 
         cast_rows = _cast_rows(results) if ctx.config.recaps.cast else []
+        if cast_rows:
+            cast_rows = _collapse(ctx, cast_rows)
         _embed(book, rows, cast_rows)
         ctx.record.recaps = len(rows)
         ctx.note("%d recaps, %d cast entries" % (len(rows), len(cast_rows)))
@@ -178,6 +180,32 @@ def _parse(text: str) -> tuple[str, str]:
             if line and " - " in line:
                 cast.append(line)
     return summary, "\n".join(cast)
+
+
+def _collapse(ctx: Context, rows: list) -> list:
+    """One person, one entry.
+
+    A model calls the same character Harry, Harry Potter and Potter across
+    three chapters, and an uncollapsed cast list reads like a crowd scene.
+    """
+    try:
+        from ..tools import dedupe_cast
+    except ImportError:                                     # pragma: no cover
+        return rows
+    try:
+        # dedupe_cast works on (order, file, name, description) rows
+        shaped = [(i, "", name, desc) for i, name, desc in rows]
+        out = dedupe_cast.collapse(shaped)
+    except Exception as exc:                                # noqa: BLE001
+        ctx.log.debug("    cast dedupe failed: %s", exc)
+        ctx.record.ran("dedupe_cast", "failed, keeping the raw list")
+        return rows
+    collapsed = [(i, name, desc) for i, _f, name, desc in out]
+    if len(collapsed) < len(rows):
+        ctx.note("cast: %d entries collapsed to %d people"
+                 % (len(rows), len(collapsed)))
+    ctx.record.ran("dedupe_cast", "%d -> %d" % (len(rows), len(collapsed)))
+    return collapsed
 
 
 def _cast_rows(results: dict) -> list[tuple[int, str, str]]:

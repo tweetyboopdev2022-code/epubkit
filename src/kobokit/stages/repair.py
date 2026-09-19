@@ -39,7 +39,35 @@ class RepairStage(Stage):
         run_tool("check_covers", [folder, "--fix"], timeout=300)
 
         fixed = self._to_epub3(ctx, book)
+        self._slim(ctx, fixed)
         return StageResult(path=fixed)
+
+    def _slim(self, ctx: Context, book: Path) -> None:
+        """Recompress a book that is bigger than the screen can use.
+
+        A 60 MB comic whose pages are 3000px wide shows exactly the same thing
+        on a 1072px panel as one a third the size, but takes three times as
+        long to open and turn. Nothing the device can display is lost.
+        """
+        limit = ctx.config.convert.slim_above_mb
+        if not limit:
+            ctx.record.not_applicable("slim", "turned off")
+            return
+        mb = book.stat().st_size / 1e6
+        if mb < limit:
+            ctx.record.not_applicable("slim", "%.1f MB, under the %.0f MB "
+                                      "threshold" % (mb, limit))
+            return
+        r = run_tool("slim", [str(book.parent), "--apply",
+                              "--panel", ctx.config.convert.panel,
+                              "--quality", str(ctx.config.convert.jpeg_quality)],
+                     timeout=1800)
+        after = book.stat().st_size / 1e6 if book.exists() else mb
+        if r.returncode == 0 and after < mb - 0.5:
+            ctx.note("slimmed %.1f MB to %.1f MB" % (mb, after))
+            ctx.record.ran("slim", "%.1f -> %.1f MB" % (mb, after))
+        else:
+            ctx.record.ran("slim", "no worthwhile saving")
 
     def _to_epub3(self, ctx: Context, book: Path) -> Path:
         from ..tools import fix_epub3, verify_fix

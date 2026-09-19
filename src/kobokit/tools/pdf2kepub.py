@@ -160,8 +160,12 @@ def _fit_one(job):
     src, dst, box, split, pw, ph, quality = job
     im = crop.crop_page(Image.open(src).convert('RGB'), box)
     parts = [im]
+    # split is False, True (ask the gutter first) or 'force' (always cut).
+    # The gutter check exists to protect a picture that runs across both
+    # pages; in a book where every illustration does that, it protects every
+    # page and nothing gets split, which is its own kind of wrong.
     if split:
-        ok, ink, gap = crop.gutter_split(im)
+        ok = True if split == 'force' else crop.gutter_split(im)[0]
         if ok:
             c = im.width // 2
             parts = [im.crop((0, 0, c, im.height)), im.crop((c, 0, im.width, im.height))]
@@ -198,7 +202,12 @@ def main():
     ap.add_argument('--description', default='')
     ap.add_argument('--panel', default='1072x1448', help='WxH of the device screen')
     ap.add_argument('--quality', type=int, default=88)
-    ap.add_argument('--split-spreads', action='store_true')
+    ap.add_argument('--split-spreads', action='store_true',
+                    help='cut two-page scans into single pages, leaving a '
+                         'spread whole where artwork crosses the gutter')
+    ap.add_argument('--force-split', action='store_true',
+                    help='cut EVERY page down the middle, gutter or not, for '
+                         'a book whose illustrations all run across the spread')
     ap.add_argument('--swap-first-two', action='store_true')
     ap.add_argument('--keep-blanks', action='store_true')
     ap.add_argument('--no-crop', action='store_true')
@@ -251,7 +260,8 @@ def main():
         fit_dir = os.path.join(tmp, '_fit')
         os.makedirs(fit_dir, exist_ok=True)
         jobs = [(p, os.path.join(fit_dir, os.path.basename(p) + '.jpg'), box,
-                 a.split_spreads, pw, ph, a.quality) for p in pages]
+                 ('force' if a.force_split else bool(a.split_spreads)),
+                 pw, ph, a.quality) for p in pages]
         todo = [j for j in jobs if not os.path.exists(j[1])]
         if todo:
             from multiprocessing import Pool
@@ -272,9 +282,14 @@ def main():
                 if os.path.exists(b):
                     merged.append(b)
             imgs, split_n = merged, len(extra)
-        if a.split_spreads:
-            print('split %d of %d spreads; kept %d whole where art crosses the gutter'
-                  % (split_n, len(pages), len(pages) - split_n))
+        if a.split_spreads or a.force_split:
+            kept = len(pages) - split_n
+            print('split %d of %d spreads; kept %d whole%s'
+                  % (split_n, len(pages), kept,
+                     '' if a.force_split else ' where art crosses the gutter'))
+            if kept and not a.force_split:
+                print('  %d page(s) left whole. If those should have been '
+                      'split as well, re-run with --force-split.' % kept)
         if a.swap_first_two and len(imgs) > 1:
             imgs[0], imgs[1] = imgs[1], imgs[0]
 
