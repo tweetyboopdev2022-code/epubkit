@@ -90,10 +90,13 @@ class ConvertStage(Stage):
 
         if fixed:
             setting = (ctx.config.convert.split_spreads or "auto").lower()
-            split = setting == "always" or (setting == "auto" and spread)
-            if split:
-                # the splitter judges each page for itself and leaves a spread
-                # whole where the artwork runs across the gutter
+            if setting == "force":
+                # every wide page cut down the middle, gutter or not
+                args += ["--split-spreads", "--force-split"]
+                ctx.note("splitting every page down the middle (force)")
+            elif setting == "always" or (setting == "auto" and spread):
+                # each page judged for itself; a spread whose artwork runs
+                # across the gutter is left whole
                 args.append("--split-spreads")
                 ctx.note("pages are wide enough to be two-page spreads; "
                          "splitting them")
@@ -113,6 +116,18 @@ class ConvertStage(Stage):
         ctx.meta["fixed_layout"] = fixed
         ctx.note("converted from pdf (%s)" % ("fixed layout" if fixed
                                               else "reflowed"))
+        # Say how the split actually went. "Splitting them" followed by
+        # silence is how half a book stays in spreads without anyone noticing.
+        m = re.search(r"split (\d+) of (\d+) spreads; kept (\d+) whole",
+                      r.stdout or "")
+        if m:
+            done, total, kept = (int(g) for g in m.groups())
+            ctx.meta["spreads_kept"] = kept
+            ctx.note("spreads: %d of %d split, %d left whole%s"
+                     % (done, total, kept,
+                        " (artwork crosses the gutter; "
+                        "convert.split_spreads = \"force\" cuts them anyway)"
+                        if kept else ""))
         return StageResult(path=dst)
 
 

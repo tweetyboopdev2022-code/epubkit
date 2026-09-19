@@ -70,10 +70,20 @@ class MetadataStage(Stage):
 
         out_dir = ctx.work / "meta"
         out_dir.mkdir(parents=True, exist_ok=True)
-        r = run_tool("apply_metadata",
-                     [str(book.parent), "--plan", str(plan_path),
-                      "--out", str(out_dir)],
-                     timeout=600)
+        args = [str(book.parent), "--plan", str(plan_path),
+                "--out", str(out_dir)]
+
+        # A book with no cover art at all gets a plain typographic one, so the
+        # shelf is not a row of grey rectangles. Real artwork is never
+        # replaced - this only fires when there is none.
+        if ctx.config.convert.make_missing_covers and current.get("title"):
+            if _has_cover(book):
+                ctx.record.not_applicable("makecover", "the book has a cover")
+            else:
+                args += ["--cover-for", book.name]
+                ctx.note("no cover art in the file; generating a plain one")
+                ctx.record.ran("makecover")
+        r = run_tool("apply_metadata", args, timeout=600)
         applied = out_dir / book.name
         if r.returncode != 0 or not applied.exists():
             # not fatal: a book with imperfect metadata still reads
@@ -197,6 +207,37 @@ class MetadataStage(Stage):
 
 
 # ---------------------------------------------------------------- helpers
+
+
+def _has_cover(book: Path) -> bool:
+    """Is there real cover art in the archive?
+
+    The OPF may well declare a cover that is not there, so the manifest alone
+    does not answer it; the file has to exist and be big enough to be a
+    picture rather than a spacer.
+    """
+    import zipfile
+    try:
+        with zipfile.ZipFile(book) as z:
+            names = z.namelist()
+            opf = next((n for n in names if n.endswith(".opf")), None)
+            hrefs = []
+            if opf:
+                text = z.read(opf).decode("utf-8", "ignore")
+                for tag in re.findall(r"<item\b[^>]*>", text):
+                    attrs = dict(re.findall(
+                        r'([A-Za-z_:][-\w:.]*)\s*=\s*"([^"]*)"', tag))
+                    if "cover" in (attrs.get("id", "") + attrs.get(
+                            "properties", "")).lower() and attrs.get("href"):
+                        hrefs.append(attrs["href"])
+            candidates = [n for n in names
+                          if any(n.endswith(h) for h in hrefs)] or \
+                         [n for n in names
+                          if "cover" in n.lower()
+                          and n.lower().endswith((".jpg", ".jpeg", ".png"))]
+            return any(z.getinfo(n).file_size > 2000 for n in candidates)
+    except (zipfile.BadZipFile, OSError, KeyError):
+        return True          # unreadable is not the same as coverless
 
 
 def _missing(meta: dict, overwrite: bool) -> list[str]:

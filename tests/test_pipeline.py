@@ -154,3 +154,37 @@ def test_books_are_renamed_from_their_metadata(library, tmp_path, monkeypatch):
     run(cfg)
     assert {p.name for p in out.glob("*.epub")} == {
         "Book One - Ada Tester.epub", "Book Two - Ada Tester.epub"}
+
+
+def test_a_novel_comes_out_as_a_kepub(library, tmp_path):
+    """koboSpans are what let a Kobo track pages and remember the position."""
+    import zipfile as _z
+    out = tmp_path / "lib"
+    cfg = cfg_for(library, out, **{
+        "run.stages": ("ingest", "repair", "kepub", "validate")})
+    state = run(cfg)
+    assert state.counts().get("done") == 2
+    made = sorted(out.glob("*.kepub.epub"))
+    assert len(made) == 2
+    for p in made:
+        with _z.ZipFile(p) as z:
+            spans = sum(z.read(n).count(b"koboSpan") for n in z.namelist()
+                        if n.endswith(".xhtml"))
+        assert spans > 0
+
+
+def test_kepub_can_be_turned_off(library, tmp_path):
+    out = tmp_path / "lib"
+    cfg = cfg_for(library, out, **{"convert.kepub": False,
+                                   "run.stages": ("ingest", "kepub")})
+    run(cfg)
+    assert [p.suffix for p in out.glob("*.epub")] == [".epub", ".epub"]
+
+
+def test_every_book_records_which_steps_did_not_apply(library, tmp_path):
+    out = tmp_path / "lib"
+    state = run(cfg_for(library, out, **{
+        "run.stages": ("ingest", "repair", "validate")}))
+    for rec in state.books.values():
+        assert rec.tools, "no record of what ran for %s" % rec.source
+        assert any(v.startswith("n/a: ") for v in rec.tools.values())
