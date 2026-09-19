@@ -262,6 +262,8 @@ def main(argv: list[str] | None = None) -> int:
             for p in problems:
                 print("  - %s" % p)
             return 1
+        for notice in cfg.notices():
+            print("note: %s" % notice)
         print("configuration looks usable")
         if cfg._ai_needed():
             from .ai import build

@@ -188,3 +188,37 @@ def test_every_book_records_which_steps_did_not_apply(library, tmp_path):
     for rec in state.books.values():
         assert rec.tools, "no record of what ran for %s" % rec.source
         assert any(v.startswith("n/a: ") for v in rec.tools.values())
+
+
+def test_the_library_inside_the_source_is_not_re_ingested(tmp_path):
+    """Her real layout: output = <source>/Ready for Kobo. Without excluding
+    it the run walks into its own output, treats every finished book as a new
+    arrival, and grows the batch every time it runs."""
+    src = tmp_path / "Books"
+    make_epub(src / "One.epub", "One")
+    out = src / "Ready for Kobo"
+    out.mkdir(parents=True)
+    make_epub(out / "One - Author.kepub.epub", "One")      # a previous run
+    make_epub(out / ".kobokit-originals" / "One.epub", "One")
+
+    found = [p.name for p in find_books(src, exclude=(out,))]
+    assert found == ["One.epub"]
+
+
+def test_a_run_into_a_nested_library_stays_the_same_size(tmp_path):
+    src = tmp_path / "Books"
+    make_epub(src / "One.epub", "One")
+    make_epub(src / "Two.epub", "Two")
+    cfg = cfg_for(src, src / "Ready for Kobo")
+
+    first = run(cfg)
+    assert first.counts().get("done") == 2
+
+    second = run(cfg_for(src, src / "Ready for Kobo", **{"run.resume": False}))
+    assert len(second.books) == 2, "the run picked up its own output"
+
+
+def test_hidden_directories_are_skipped(tmp_path):
+    make_epub(tmp_path / "Real.epub")
+    make_epub(tmp_path / ".kobokit-work" / "scratch.epub")
+    assert [p.name for p in find_books(tmp_path)] == ["Real.epub"]

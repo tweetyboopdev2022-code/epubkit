@@ -333,6 +333,20 @@ class Config:
             return True
         return "metadata" in self.run.stages and self.metadata.use_ai_fallback
 
+    def notices(self) -> list[str]:
+        """Things worth saying that are not problems."""
+        out = []
+        src, dst = self.paths.source, self.paths.output
+        if src and dst:
+            try:
+                if src.resolve() in dst.resolve().parents:
+                    out.append("the library (%s) sits inside the source folder."
+                               " Finished books there are left out of the scan,"
+                               " so they are not processed twice." % dst.name)
+            except OSError:
+                pass
+        return out
+
     def describe(self) -> str:
         key = "set" if self.ai.api_key() else (
             "not needed" if self.ai.provider == "ollama" else "MISSING")
