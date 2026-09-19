@@ -14,18 +14,77 @@ learned by breaking something first.
 
 ## Install
 
+kobokit needs **Python 3.10 or newer**, and it is worth checking which Python
+you are about to use before anything else:
+
 ```sh
-pip install -e ".[full]"      # lxml + epubcheck: the repair and validate path
-pip install -e ".[full,pdf]"  # plus PDF conversion
+python3 -V
 ```
 
-The core package has no runtime dependencies beyond a `tomli` backport on
-Python 3.10. The model clients are plain `urllib`. The extras are only pulled
-in by the stages that need them, and a stage whose tools are missing says so
-and steps aside instead of failing the run.
+Install it into an environment of its own:
 
-EPUBCheck needs a JVM. Without one, the validate stage is skipped and every
-book is reported as unvalidated rather than as clean.
+```sh
+python3 -m venv ~/.venvs/kobokit
+~/.venvs/kobokit/bin/pip install -e ".[full,pdf]"
+```
+
+`full` is lxml and EPUBCheck — the repair and validation path, and what makes
+this worth running at all. `pdf` adds PyMuPDF for PDF conversion. Leave `pdf`
+off if you have no PDFs; the stage that needs it will say so and step aside
+rather than failing the run.
+
+Then either put it on your PATH or alias it:
+
+```sh
+ln -s ~/.venvs/kobokit/bin/kobokit ~/bin/kobokit     # if ~/bin is on your PATH
+# or, in ~/.zshrc or ~/.bashrc:
+alias kobokit="$HOME/.venvs/kobokit/bin/kobokit"
+```
+
+If you have `uv`, all of that collapses to one line, and it fetches a suitable
+Python itself:
+
+```sh
+uv tool install --editable ".[full,pdf]"
+```
+
+### EPUBCheck needs Java
+
+```sh
+java -version                     # if this fails:
+brew install --cask temurin       # macOS
+sudo apt install default-jre      # Debian/Ubuntu
+```
+
+Without a JVM the validate stage is skipped and every book is reported as
+**unvalidated** rather than as clean — which quietly removes the check that
+this whole pipeline exists to pass. Worth confirming before a long run.
+
+### Things that go wrong on macOS
+
+**`ERROR: File "setup.py" or "setup.cfg" not found ... editable mode currently
+requires a setuptools-based build`** — you are on Xcode's bundled Python. It
+is 3.9 with a pip from 2021: too old to install a `pyproject.toml`-only
+project, and below the version kobokit needs in any case. Install a real
+Python (`brew install python@3.12`) and use that to make the venv.
+
+**`zsh: command not found: kobokit` right after creating the symlink** — two
+candidates, and this tells you which:
+
+```sh
+~/.venvs/kobokit/bin/kobokit --version
+```
+
+If that prints a version, the install is fine and it is a PATH problem: either
+`~/bin` is not on your PATH, or it is and zsh has not noticed the new file yet,
+because zsh caches where commands live. `rehash`, or a new terminal tab, fixes
+the second. If instead it says *No such file*, the install never completed —
+`ln -s` creates a link happily even when nothing is on the other end, so the
+symlink existing proved nothing. Re-run the pip install and read the whole
+output, not the last line.
+
+**A long `pip install` that fails somewhere in lxml** usually wants Xcode's
+command line tools: `xcode-select --install`.
 
 ## Use
 
@@ -104,7 +163,28 @@ a config file is rejected at load: config files get committed, environment
 variables do not.
 
 `kobokit check` pings the endpoint and tells you if the model is missing before
-you start a four-hour run.
+you start a four-hour run. Do that first, every time — it is the difference
+between finding out now and finding out in the third hour.
+
+The Ollama endpoint does not have to be local. Pointing it at another machine
+on your network, or across a VPN, is the same flag:
+
+```sh
+kobokit check --provider ollama --model qwen3:8b --endpoint http://10.0.0.5:11434
+```
+
+### Reasoning models
+
+qwen3, deepseek-r1 and their relatives narrate their thinking before they
+answer. kobokit asks for that to be turned off, strips any that arrives
+anyway, and reads the model's *last* complete JSON object rather than
+everything between the first brace and the last — a reasoning model quotes the
+answer shape to itself on the way past, and the span between the two braces is
+not JSON.
+
+If you are running one of these on a single GPU, set `concurrency = 1` under
+`[ai]`. Parallel requests queue behind each other on one card, so the default
+of 2 buys nothing and can push a model into swapping.
 
 ## Configuration
 
