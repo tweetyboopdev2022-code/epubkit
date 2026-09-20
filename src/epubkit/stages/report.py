@@ -26,7 +26,7 @@ def shelf_checks(out_dir: Path) -> list[str]:
     import sys
     try:
         r = subprocess.run(
-            [sys.executable, "-m", "kobokit.tools.check_art",
+            [sys.executable, "-m", "epubkit.tools.check_art",
              str(out_dir), "--quiet"],
             capture_output=True, text=True, timeout=600)
     except (OSError, subprocess.SubprocessError):
@@ -51,7 +51,7 @@ def write(state: RunState, out_dir: Path, elapsed: float) -> Path:
     recaps = sum(b.recaps or 0 for b in done)
 
     L: list[str] = []
-    L.append("# kobokit run")
+    L.append("# epubkit run")
     L.append("")
     L.append("%s, %d books in %s." % (time.strftime("%d %B %Y"), len(books),
                                       _duration(elapsed)))

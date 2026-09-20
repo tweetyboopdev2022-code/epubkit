@@ -95,8 +95,8 @@ def library(tmp_path: Path) -> Path:
 
 @pytest.fixture(autouse=True)
 def no_ambient_config(monkeypatch):
-    """A test must never pick up a real kobokit.toml from the machine it runs on."""
-    monkeypatch.setattr("kobokit.config.Config.discover", staticmethod(lambda: None))
+    """A test must never pick up a real epubkit.toml from the machine it runs on."""
+    monkeypatch.setattr("epubkit.config.Config.discover", staticmethod(lambda: None))
     for var in list(__import__("os").environ):
-        if var.startswith("KOBOKIT_") or var in ("RECAP_ENDPOINT", "RECAP_MODEL"):
+        if var.startswith("EPUBKIT_") or var in ("RECAP_ENDPOINT", "RECAP_MODEL"):
             monkeypatch.delenv(var, raising=False)

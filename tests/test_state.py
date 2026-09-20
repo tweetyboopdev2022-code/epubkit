@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from kobokit.state import BookRecord, RunState, fingerprint
+from epubkit.state import BookRecord, RunState, fingerprint
 
 
 def test_fingerprint_changes_when_the_file_does(tmp_path):

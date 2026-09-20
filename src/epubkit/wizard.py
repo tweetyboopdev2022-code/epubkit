@@ -1,4 +1,4 @@
-"""The guided setup behind `kobokit init`.
+"""The guided setup behind `epubkit init`.
 
 Every answer is checked while the person is still standing there: a folder is
 counted, an endpoint is called, a model list is fetched from the server rather
@@ -121,7 +121,7 @@ def ask_source(current: str = "") -> Path:
         if n:
             print("  %d book(s) there." % n)
             return folder
-        print("  That folder has no books in it that kobokit recognises.")
+        print("  That folder has no books in it that epubkit recognises.")
         if ask_yes("  Use it anyway?", default=False):
             return folder
 
@@ -164,7 +164,7 @@ def ask_ai(current_provider="ollama", current_model="", current_endpoint=""):
         model = ask("Model", model)
         env = KEY_ENV[provider]
         if not os.environ.get(env):
-            print("  Note: %s is not set in this shell. kobokit never stores a "
+            print("  Note: %s is not set in this shell. epubkit never stores a "
                   "key in the config file, so export it before a run:" % env)
             print("    export %s=..." % env)
     return provider, model, endpoint
@@ -197,14 +197,14 @@ def run(target: Path | None = None) -> int:
     if target.exists():
         print("%s already exists." % target)
         if not ask_yes("Go through setup again and replace it?", default=False):
-            print("Left as it is. `kobokit config set` changes one setting.")
+            print("Left as it is. `epubkit config set` changes one setting.")
             return 0
         try:
             existing = Config.load(target)
         except Exception:                                   # noqa: BLE001
             existing = None
 
-    print("\nkobokit setup - press Enter to take the default in brackets.\n")
+    print("\nepubkit setup - press Enter to take the default in brackets.\n")
     src_default = str(existing.paths.source) if existing and existing.paths.source else ""
     out_default = str(existing.paths.output) if existing and existing.paths.output else ""
 
@@ -235,7 +235,7 @@ def run(target: Path | None = None) -> int:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(body)
     print("\nWrote %s" % target)
-    print("Next: kobokit doctor   (checks the pieces are installed)")
-    print("      kobokit check    (confirms this config works)")
-    print("      kobokit run -n   (says what it would do, touching nothing)")
+    print("Next: epubkit doctor   (checks the pieces are installed)")
+    print("      epubkit check    (confirms this config works)")
+    print("      epubkit run -n   (says what it would do, touching nothing)")
     return 0

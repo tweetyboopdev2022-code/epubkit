@@ -1,5 +1,5 @@
-# kobokit.toml - copy this next to your library, or to
-# ~/.config/kobokit/kobokit.toml, and edit.
+# epubkit.toml - copy this next to your library, or to
+# ~/.config/epubkit/epubkit.toml, and edit.
 #
 # API keys are NOT read from this file. Export them instead:
 #   export ANTHROPIC_API_KEY=...
@@ -10,8 +10,8 @@
 [paths]
 source = "~/Downloads/books"
 output = "~/Books/kobo"
-# work   = ""   # defaults to <output>/.kobokit-work
-# backup = ""   # defaults to <output>/.kobokit-originals, holds the originals
+# work   = ""   # defaults to <output>/.epubkit-work
+# backup = ""   # defaults to <output>/.epubkit-originals, holds the originals
 
 [ai]
 provider = "ollama"              # ollama | anthropic | openai

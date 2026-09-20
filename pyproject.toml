@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "kobokit"
+name = "epubkit"
 version = "0.1.0"
 description = "Take a folder of downloaded books to a clean, validated Kobo library"
 readme = "README.md"
@@ -17,7 +17,7 @@ classifiers = [
 ]
 
 # Deliberately no runtime dependencies on the core path. This runs on a laptop,
-# sometimes inside a locked-down VM, and `pip install kobokit` pulling in
+# sometimes inside a locked-down VM, and `pip install epubkit` pulling in
 # nothing at all is worth more than the convenience of a vendor SDK. The model
 # clients are plain urllib.
 dependencies = [
@@ -34,13 +34,13 @@ mobi = ["mobi>=0.3"]
 dev  = ["pytest>=7", "pytest-cov", "ruff"]
 
 [project.scripts]
-kobokit = "kobokit.cli:main"
+epubkit = "epubkit.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-kobokit = ["tools/*.json"]
+epubkit = ["tools/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -49,11 +49,11 @@ addopts = "-q"
 [tool.ruff]
 line-length = 88
 target-version = "py310"
-# src/kobokit/tools holds the scripts this was built out of. They are proven
+# src/epubkit/tools holds the scripts this was built out of. They are proven
 # against a real 373-book library and are carried over unchanged on purpose:
 # reformatting them buys style and risks a regression in an EPUB rewriter that
 # is hard to test and expensive to get wrong.
-extend-exclude = ["src/kobokit/tools"]
+extend-exclude = ["src/epubkit/tools"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]

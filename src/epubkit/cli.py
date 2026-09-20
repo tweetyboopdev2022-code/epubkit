@@ -1,4 +1,4 @@
-"""The kobokit command."""
+"""The epubkit command."""
 from __future__ import annotations
 
 import argparse
@@ -11,8 +11,8 @@ from . import __version__
 from .config import ALL_STAGES, CONFIG_NAME, Config, ConfigError
 
 EXAMPLE_CONFIG = """\
-# kobokit.toml - copy this next to your library, or to
-# ~/.config/kobokit/kobokit.toml, and edit.
+# epubkit.toml - copy this next to your library, or to
+# ~/.config/epubkit/epubkit.toml, and edit.
 #
 # API keys are NOT read from this file. Export them instead:
 #   export ANTHROPIC_API_KEY=...
@@ -23,8 +23,8 @@ EXAMPLE_CONFIG = """\
 [paths]
 source = "~/Downloads/books"
 output = "~/Books/kobo"
-# work   = ""   # defaults to <output>/.kobokit-work
-# backup = ""   # defaults to <output>/.kobokit-originals, holds the originals
+# work   = ""   # defaults to <output>/.epubkit-work
+# backup = ""   # defaults to <output>/.epubkit-originals, holds the originals
 
 [ai]
 provider = "ollama"              # ollama | anthropic | openai
@@ -80,30 +80,30 @@ resume = true
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="kobokit",
+        prog="epubkit",
         description="Take a folder of downloaded books to a clean Kobo library.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
-  kobokit init                        write a starter kobokit.toml
-  kobokit check                       show the config and what is missing
-  kobokit run --in ~/Downloads/books --out ~/Books/kobo
-  kobokit run --no-recaps --workers 4
-  kobokit run --only validate         re-validate an existing library
-  kobokit recaps BOOK.epub            recaps for one book
+  epubkit init                        write a starter epubkit.toml
+  epubkit check                       show the config and what is missing
+  epubkit run --in ~/Downloads/books --out ~/Books/kobo
+  epubkit run --no-recaps --workers 4
+  epubkit run --only validate         re-validate an existing library
+  epubkit recaps BOOK.epub            recaps for one book
 """)
-    p.add_argument("--version", action="version", version="kobokit " + __version__)
+    p.add_argument("--version", action="version", version="epubkit " + __version__)
     sub = p.add_subparsers(dest="command", required=True)
 
-    i = sub.add_parser("init", help="set up kobokit, answering a few questions")
+    i = sub.add_parser("init", help="set up epubkit, answering a few questions")
     i.add_argument("--defaults", action="store_true",
                    help="write the example config without asking anything")
     i.add_argument("-c", "--config", type=Path, dest="config",
-                   help="write somewhere other than ./kobokit.toml")
+                   help="write somewhere other than ./epubkit.toml")
 
     for name, helptext in (("check", "validate the configuration and exit"),
                            ("run", "process a folder of books")):
         s = sub.add_parser(name, help=helptext)
-        s.add_argument("-c", "--config", type=Path, help="path to kobokit.toml")
+        s.add_argument("-c", "--config", type=Path, help="path to epubkit.toml")
         s.add_argument("--in", dest="source", type=Path, help="source folder")
         s.add_argument("--out", dest="output", type=Path, help="library folder")
         s.add_argument("--provider", choices=("ollama", "anthropic", "openai"))
@@ -147,7 +147,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     d = sub.add_parser("doctor", help="check the optional pieces are installed")
     d.add_argument("--fix", action="store_true",
-                   help="install what is missing into kobokit's own environment")
+                   help="install what is missing into epubkit's own environment")
     d.add_argument("-y", "--yes", action="store_true",
                    help="do not ask before installing")
 
@@ -190,7 +190,7 @@ def _overrides(args) -> dict:
 
 
 def _logger(verbose: bool) -> logging.Logger:
-    log = logging.getLogger("kobokit")
+    log = logging.getLogger("epubkit")
     log.setLevel(logging.DEBUG if verbose else logging.INFO)
     if not log.handlers:
         h = logging.StreamHandler(sys.stderr)
@@ -200,7 +200,7 @@ def _logger(verbose: bool) -> logging.Logger:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # `kobokit config list | head` should not end in a traceback
+    # `epubkit config list | head` should not end in a traceback
     try:
         import signal
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)
@@ -217,7 +217,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             target.write_text(EXAMPLE_CONFIG)
             print("wrote %s" % target)
-            print("Edit paths.source and paths.output, then: kobokit check")
+            print("Edit paths.source and paths.output, then: epubkit check")
             return 0
         from .wizard import Cancelled
         from .wizard import run as run_wizard
@@ -323,7 +323,7 @@ def _cmd_recaps(args, cfg: Config, log) -> int:
     from .state import BookRecord
 
     provider = build(cfg.ai)
-    work = book.parent / ".kobokit-work"
+    work = book.parent / ".epubkit-work"
     work.mkdir(exist_ok=True)
     rec = BookRecord(source=str(book))
     ctx = Context(config=cfg, record=rec, path=book, work=work, log=log,
@@ -351,7 +351,7 @@ def _cmd_config(args, cfg: Config) -> int:
         return 0
 
     if not args.key:
-        print("which setting? `kobokit config list` shows them all",
+        print("which setting? `epubkit config list` shows them all",
               file=sys.stderr)
         return 2
 
@@ -362,7 +362,7 @@ def _cmd_config(args, cfg: Config) -> int:
             return 0
 
         if args.value is None:
-            print("no value given. Try: kobokit config set %s VALUE" % args.key,
+            print("no value given. Try: epubkit config set %s VALUE" % args.key,
                   file=sys.stderr)
             return 2
         path = ce.target_file(cfg, args.config)
@@ -415,7 +415,7 @@ def _cmd_split(args) -> int:
     print(r.stdout or r.stderr or "")
     if r.returncode != 0:
         return 1
-    print("\nThe omnibus itself was not touched. Run kobokit on the parts to "
+    print("\nThe omnibus itself was not touched. Run epubkit on the parts to "
           "give them metadata and covers of their own.")
     return 0
 
@@ -423,7 +423,7 @@ def _cmd_split(args) -> int:
 def _cmd_doctor(args) -> int:
     from . import deps
 
-    print("kobokit can run:")
+    print("epubkit can run:")
     for line in deps.report():
         print("  " + line)
 
@@ -446,7 +446,7 @@ def _cmd_doctor(args) -> int:
         return 1
     cmd = deps.install_command(missing)
     if not args.fix:
-        print("\nTo install the Python pieces: kobokit doctor --fix")
+        print("\nTo install the Python pieces: epubkit doctor --fix")
         return 1
 
     print("\nThis will run:\n  %s" % " ".join(cmd))
@@ -473,12 +473,12 @@ def _cmd_doctor(args) -> int:
     # interpreter is not reliably importable in that same process
     still = subprocess.run(
         [sys.executable, "-c",
-         "from kobokit import deps; print(','.join(deps.missing_modules()))"],
+         "from epubkit import deps; print(','.join(deps.missing_modules()))"],
         capture_output=True, text=True).stdout.strip()
     if still:
         print("\nStill missing after the install: %s" % still)
         return 1
-    print("\nDone. Everything kobokit needs is installed.")
+    print("\nDone. Everything epubkit needs is installed.")
     return 0 if java else 1
 
 

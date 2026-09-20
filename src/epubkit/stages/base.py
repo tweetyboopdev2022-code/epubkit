@@ -59,6 +59,6 @@ def run_tool(module: str, args: list[str], timeout: int = 900,
     crashes a tool should not take the rest of the batch with it. The cost is
     a process launch per step, which is nothing beside EPUBCheck.
     """
-    cmd = [sys.executable, "-m", "kobokit.tools." + module, *args]
+    cmd = [sys.executable, "-m", "epubkit.tools." + module, *args]
     return subprocess.run(cmd, capture_output=True, text=True,
                           timeout=timeout, cwd=str(cwd) if cwd else None)

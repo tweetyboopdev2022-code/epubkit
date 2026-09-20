@@ -6,13 +6,13 @@ dist/
 .venv/
 venv/
 
-# Local settings and run artefacts. kobokit.toml is ignored on purpose: it
+# Local settings and run artefacts. epubkit.toml is ignored on purpose: it
 # names real paths on a real machine, and the example lives in the README.
-kobokit.toml
+epubkit.toml
 config.local.sh
-.kobokit-work/
-.kobokit-originals/
-kobokit-state.json
+.epubkit-work/
+.epubkit-originals/
+epubkit-state.json
 REPORT.md
 
 .pytest_cache/
@@ -20,3 +20,9 @@ REPORT.md
 .coverage
 htmlcov/
 .DS_Store
+
+# The tool's former name (kobokit). Existing libraries and configs still use it.
+kobokit.toml
+.kobokit-work/
+.kobokit-originals/
+kobokit-state.json

@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from kobokit.config import Config, ConfigError
+from epubkit.config import Config, ConfigError
 
 
 def write(tmp_path: Path, body: str) -> Path:
-    p = tmp_path / "kobokit.toml"
+    p = tmp_path / "epubkit.toml"
     p.write_text(body)
     return p
 
@@ -36,13 +36,13 @@ workers = 7
 
 def test_env_beats_file(tmp_path, monkeypatch):
     p = write(tmp_path, '[ai]\nprovider = "ollama"\n')
-    monkeypatch.setenv("KOBOKIT_AI_PROVIDER", "openai")
+    monkeypatch.setenv("EPUBKIT_AI_PROVIDER", "openai")
     assert Config.load(p).ai.provider == "openai"
 
 
 def test_cli_override_beats_env(tmp_path, monkeypatch):
     p = write(tmp_path, '[ai]\nprovider = "ollama"\n')
-    monkeypatch.setenv("KOBOKIT_AI_PROVIDER", "openai")
+    monkeypatch.setenv("EPUBKIT_AI_PROVIDER", "openai")
     cfg = Config.load(p, {"ai.provider": "anthropic"})
     assert cfg.ai.provider == "anthropic"
 
@@ -109,4 +109,4 @@ def test_legacy_recap_env_still_works(monkeypatch):
 def test_missing_config_file_is_an_error_not_a_silent_default():
     """Passing -c with a typo should say so, not quietly run on defaults."""
     with pytest.raises(ConfigError, match="no config file"):
-        Config.load(Path("/nonexistent/kobokit.toml"))
+        Config.load(Path("/nonexistent/epubkit.toml"))
