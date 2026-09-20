@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-STATE_NAME = "kobokit-state.json"
+STATE_NAME = "epubkit-state.json"
 SCHEMA = 1
 
 

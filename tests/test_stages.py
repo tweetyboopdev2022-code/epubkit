@@ -7,19 +7,19 @@ import zipfile
 import pytest
 from conftest import make_epub
 
-from kobokit.config import Config, MetadataConfig
-from kobokit.stages import recaps as recaps_mod
-from kobokit.stages.base import Context
-from kobokit.stages.metadata import _filename_for, _safe, _sort_name
-from kobokit.stages.recaps import RecapStage, _cast_rows, _manifest, _parse
-from kobokit.stages.repair import RepairStage
-from kobokit.stages.validate import ValidateStage
-from kobokit.state import BookRecord
+from epubkit.config import Config, MetadataConfig
+from epubkit.stages import recaps as recaps_mod
+from epubkit.stages.base import Context
+from epubkit.stages.metadata import _filename_for, _safe, _sort_name
+from epubkit.stages.recaps import RecapStage, _cast_rows, _manifest, _parse
+from epubkit.stages.repair import RepairStage
+from epubkit.stages.validate import ValidateStage
+from epubkit.state import BookRecord
 
 
 def context(cfg, path, work, provider=None):
     return Context(config=cfg, record=BookRecord(source=str(path)), path=path,
-                   work=work, log=logging.getLogger("kobokit.test"),
+                   work=work, log=logging.getLogger("epubkit.test"),
                    provider=provider)
 
 
@@ -174,7 +174,7 @@ def test_repair_keeps_every_document(tmp_path, epub):
 
 def test_validate_reports_rather_than_failing_when_epubcheck_is_absent(
         tmp_path, epub, monkeypatch):
-    from kobokit.tools import epubcheck_util as ec
+    from epubkit.tools import epubcheck_util as ec
     monkeypatch.setattr(ec, "available", lambda: False)
     cfg = Config.load(None, {"source": epub.parent, "output": tmp_path / "o"})
     ctx = context(cfg, epub, tmp_path)
@@ -184,7 +184,7 @@ def test_validate_reports_rather_than_failing_when_epubcheck_is_absent(
 
 
 def test_a_book_with_errors_is_not_written_by_default(tmp_path, epub, monkeypatch):
-    from kobokit.tools import epubcheck_util as ec
+    from epubkit.tools import epubcheck_util as ec
     monkeypatch.setattr(ec, "available", lambda: True)
     monkeypatch.setattr(ec, "run", lambda *a, **k: [
         {"severity": "ERROR", "code": "RSC-005", "message": "bad", "file": "x"}])
@@ -193,7 +193,7 @@ def test_a_book_with_errors_is_not_written_by_default(tmp_path, epub, monkeypatc
 
 
 def test_accept_improvement_ships_a_book_that_got_better(tmp_path, epub, monkeypatch):
-    from kobokit.tools import epubcheck_util as ec
+    from epubkit.tools import epubcheck_util as ec
     monkeypatch.setattr(ec, "available", lambda: True)
     monkeypatch.setattr(ec, "run", lambda *a, **k: [
         {"severity": "ERROR", "code": "RSC-005", "message": "bad", "file": "x"}])
@@ -210,7 +210,7 @@ def test_the_book_own_metadata_is_actually_read(tmp_path, monkeypatch):
     """The bundled tools take a folder, not a file. Handing them a file made
     every book come out as "unresolved: title, authors" while the run still
     reported success."""
-    from kobokit.stages.metadata import MetadataStage
+    from epubkit.stages.metadata import MetadataStage
     book = make_epub(tmp_path / "src" / "download-xyz.epub", "The Real Title")
     work = tmp_path / "work"
     work.mkdir()
@@ -221,7 +221,7 @@ def test_the_book_own_metadata_is_actually_read(tmp_path, monkeypatch):
     cfg = Config.load(None, {"source": book.parent, "output": tmp_path / "o",
                              "metadata.use_ai_fallback": False})
     ctx = context(cfg, staged, work)
-    monkeypatch.setattr("kobokit.stages.metadata.MetadataStage._catalogue",
+    monkeypatch.setattr("epubkit.stages.metadata.MetadataStage._catalogue",
                         lambda self, *a: {})          # no network in a test
     result = MetadataStage().run(ctx)
 
@@ -234,7 +234,7 @@ def test_the_book_own_metadata_is_actually_read(tmp_path, monkeypatch):
 # -- ingest and convert ----------------------------------------------------
 
 def test_an_unrecognised_file_is_named_not_silently_dropped(tmp_path):
-    from kobokit.stages.ingest import IngestStage
+    from epubkit.stages.ingest import IngestStage
     odd = tmp_path / "something.cbz"
     odd.write_bytes(b"x")
     cfg = Config.load(None, {"source": tmp_path, "output": tmp_path / "o"})
@@ -244,7 +244,7 @@ def test_an_unrecognised_file_is_named_not_silently_dropped(tmp_path):
 
 
 def test_a_kepub_is_recognised_as_a_kepub(tmp_path):
-    from kobokit.stages.ingest import classify
+    from epubkit.stages.ingest import classify
     plain = make_epub(tmp_path / "plain.epub")
     assert classify(plain) == "epub"
 
@@ -262,7 +262,7 @@ pymupdf = pytest.importorskip("pymupdf", reason="the pdf extra is not installed"
 
 
 def test_a_text_pdf_is_reflowed_and_keeps_its_words(tmp_path):
-    from kobokit.stages.convert import ConvertStage
+    from epubkit.stages.convert import ConvertStage
     para = ("This is ordinary prose that runs on for long enough that the "
             "page is routed as a novel rather than as a scan. ") * 12
     doc = pymupdf.open()
@@ -296,7 +296,7 @@ def test_a_text_pdf_is_reflowed_and_keeps_its_words(tmp_path):
 def test_json_is_taken_from_the_model_s_final_answer():
     """A reasoning model leaves braces either side of the real answer; taking
     everything between the first and the last one parses to nothing."""
-    from kobokit.stages.metadata import _json_from
+    from epubkit.stages.metadata import _json_from
     reply = ('Let me think. The shape is {"title": "", "authors": [""]} as an '
              'example.\n\nHere is the answer:\n'
              '{"title": "Carrie", "authors": ["Stephen King"], '
@@ -307,7 +307,7 @@ def test_json_is_taken_from_the_model_s_final_answer():
 
 
 def test_json_with_braces_inside_a_string_is_still_read():
-    from kobokit.stages.metadata import _json_from
+    from epubkit.stages.metadata import _json_from
     assert _json_from('{"title": "A Study in {Scarlet}", "authors": []}'
                       )["title"] == "A Study in {Scarlet}"
 
@@ -317,7 +317,7 @@ def test_json_with_braces_inside_a_string_is_still_read():
 def test_a_wide_pdf_is_split_into_single_pages(tmp_path):
     """A landscape page in a picture book is a spread. Left whole, both pages
     end up at half size on a six-inch screen."""
-    from kobokit.stages.convert import ConvertStage
+    from epubkit.stages.convert import ConvertStage
     doc = pymupdf.open()
     for i in range(4):
         page = doc.new_page(width=1400, height=800)       # 1.75:1
@@ -348,7 +348,7 @@ def test_a_wide_pdf_is_split_into_single_pages(tmp_path):
 
 
 def test_split_spreads_never_overrides_a_no(tmp_path):
-    from kobokit.stages.convert import ConvertStage
+    from epubkit.stages.convert import ConvertStage
     doc = pymupdf.open()
     for _ in range(2):
         doc.new_page(width=1400, height=800)
@@ -367,7 +367,7 @@ def test_split_spreads_never_overrides_a_no(tmp_path):
 
 
 def test_a_portrait_pdf_is_not_split(tmp_path):
-    from kobokit.tools import pdf_route
+    from epubkit.tools import pdf_route
     doc = pymupdf.open()
     for _ in range(3):
         doc.new_page(width=800, height=1100)              # 0.73:1
@@ -380,7 +380,7 @@ def test_force_splits_a_page_whose_art_crosses_the_gutter(tmp_path):
     """The reported bug: the safety check keeps a spread whole when artwork
     runs across the middle, so a book where every illustration does that gets
     no pages split at all."""
-    from kobokit.stages.convert import ConvertStage
+    from epubkit.stages.convert import ConvertStage
     doc = pymupdf.open()
     for i in range(4):
         page = doc.new_page(width=1400, height=800)
@@ -418,7 +418,7 @@ def test_force_splits_a_page_whose_art_crosses_the_gutter(tmp_path):
 
 def test_the_split_outcome_is_always_reported(tmp_path):
     """Silence after 'splitting them' is how half a book stays in spreads."""
-    from kobokit.stages.convert import ConvertStage
+    from epubkit.stages.convert import ConvertStage
     doc = pymupdf.open()
     for _ in range(3):
         page = doc.new_page(width=1400, height=800)
@@ -441,7 +441,7 @@ def test_a_pdf_is_not_reported_as_a_clean_epub(tmp_path):
     """EPUBCheck answers 'clean' for a file it does not recognise as a book,
     so a PDF passed validation without a word. A pass that means 'I found
     nothing wrong with a file I never read' is worse than no check."""
-    from kobokit.stages.validate import ValidateStage, is_epub
+    from epubkit.stages.validate import ValidateStage, is_epub
     pdf = tmp_path / "book.pdf"
     pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
     assert is_epub(pdf) is False
@@ -455,7 +455,7 @@ def test_a_pdf_is_not_reported_as_a_clean_epub(tmp_path):
 
 
 def test_a_file_merely_named_epub_is_not_an_epub(tmp_path):
-    from kobokit.stages.validate import is_epub
+    from epubkit.stages.validate import is_epub
     fake = tmp_path / "not-really.epub"
     fake.write_bytes(b"this is not a zip")
     assert is_epub(fake) is False
@@ -468,7 +468,7 @@ def test_a_file_merely_named_epub_is_not_an_epub(tmp_path):
 
 
 def test_a_real_epub_still_validates(epub):
-    from kobokit.stages.validate import is_epub
+    from epubkit.stages.validate import is_epub
     assert is_epub(epub) is True
 
 
@@ -478,7 +478,7 @@ def test_a_div_inside_a_span_is_unwrapped():
     """Calibre wraps a page in <span class="underline"> and puts the page-break
     <div> inside it. No EPUB version accepts that, so promoting the package
     cannot fix it - the markup has to be repaired."""
-    from kobokit.tools.fix_epub3 import unwrap_inline_around_block
+    from epubkit.tools.fix_epub3 import unwrap_inline_around_block
     src = (b'<body><span class="underline"><span><div class="c5">'
            b'<div class="pb" id="p0"></div><br/></div></span></span>'
            b'<p>Real text</p></body>')
@@ -492,7 +492,7 @@ def test_a_div_inside_a_span_is_unwrapped():
 def test_a_div_inside_a_p_becomes_a_div_not_a_deletion():
     """A <p> carries the paragraph's styling, so it is retagged rather than
     unwrapped - <div> holds the same content legally."""
-    from kobokit.tools.fix_epub3 import unwrap_inline_around_block
+    from epubkit.tools.fix_epub3 import unwrap_inline_around_block
     src = b'<p class="calibre7"><div class="c3"><img src="x.jpg"/></div></p>'
     out, n = unwrap_inline_around_block(src)
     assert n == 1
@@ -503,7 +503,7 @@ def test_a_div_inside_a_p_becomes_a_div_not_a_deletion():
 
 
 def test_healthy_markup_is_left_exactly_alone():
-    from kobokit.tools.fix_epub3 import unwrap_inline_around_block
+    from epubkit.tools.fix_epub3 import unwrap_inline_around_block
     for good in (
         b'<p>Plain <span class="bold">emphasis</span> and more.</p>',
         b'<div><p>A paragraph</p><p>And another</p></div>',
@@ -516,7 +516,7 @@ def test_healthy_markup_is_left_exactly_alone():
 
 def test_kobospans_are_never_unwrapped():
     """A koboSpan is where the device's saved reading position points."""
-    from kobokit.tools.fix_epub3 import unwrap_inline_around_block
+    from epubkit.tools.fix_epub3 import unwrap_inline_around_block
     src = (b'<p><span class="koboSpan" id="kobo.1.1">Some words</span></p>')
     out, n = unwrap_inline_around_block(src)
     assert n == 0
@@ -524,14 +524,14 @@ def test_kobospans_are_never_unwrapped():
 
 
 def test_nested_wrappers_all_come_off():
-    from kobokit.tools.fix_epub3 import unwrap_inline_around_block
+    from epubkit.tools.fix_epub3 import unwrap_inline_around_block
     src = b'<b><i><span><div>block</div></span></i></b>'
     out, _ = unwrap_inline_around_block(src)
     assert out == b'<div>block</div>'
 
 
 def test_unclosed_tags_do_not_derail_it():
-    from kobokit.tools.fix_epub3 import unwrap_inline_around_block
+    from epubkit.tools.fix_epub3 import unwrap_inline_around_block
     src = b'<p><span><div>x</div><p>y</p>'
     out, _ = unwrap_inline_around_block(src)
     assert b"x" in out and b"y" in out

@@ -1,4 +1,4 @@
-"""`kobokit config get/set/list` - change one setting without an editor.
+"""`epubkit config get/set/list` - change one setting without an editor.
 
 Writes back by patching the line in place, so the comments explaining what
 each setting does survive. A config file that loses its comments the first

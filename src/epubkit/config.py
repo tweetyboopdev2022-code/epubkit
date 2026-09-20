@@ -19,13 +19,15 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from . import legacy
+
 try:                                    # 3.11+
     import tomllib
 except ModuleNotFoundError:             # pragma: no cover - 3.10 fallback
     import tomli as tomllib  # type: ignore
 
-CONFIG_NAME = "kobokit.toml"
-ENV_PREFIX = "KOBOKIT_"
+CONFIG_NAME = "epubkit.toml"
+ENV_PREFIX = "EPUBKIT_"
 
 #: Where each provider's key is expected to live.
 KEY_ENV = {
@@ -79,6 +81,14 @@ class AIConfig:
         return os.environ.get(name) or None
 
 
+def _env(suffix: str) -> str | None:
+    """EPUBKIT_<suffix>, falling back to the old KOBOKIT_<suffix>."""
+    name = ENV_PREFIX + suffix
+    if name in os.environ:
+        return os.environ[name]
+    return legacy.old_env(suffix)
+
+
 @dataclass
 class PathsConfig:
     source: Path | None = None
@@ -92,9 +102,12 @@ class PathsConfig:
             source=self.source.expanduser().resolve() if self.source else None,
             output=out,
             work=(self.work.expanduser().resolve() if self.work
-                  else (out / ".kobokit-work" if out else None)),
+                  else (legacy.dir_or_old(out / ".epubkit-work", legacy.OLD_WORK_DIR)
+                        if out else None)),
             backup=(self.backup.expanduser().resolve() if self.backup
-                    else (out / ".kobokit-originals" if out else None)),
+                    else (legacy.dir_or_old(out / ".epubkit-originals",
+                                            legacy.OLD_BACKUP_DIR)
+                          if out else None)),
         )
 
 
@@ -198,15 +211,20 @@ class Config:
 
     @staticmethod
     def discover() -> Path | None:
-        """Nearest kobokit.toml walking up, then the XDG config dir."""
+        """Nearest epubkit.toml walking up, then the XDG config dir."""
         here = Path.cwd().resolve()
         for d in (here, *here.parents):
             p = d / CONFIG_NAME
             if p.is_file():
                 return p
         xdg = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-        p = xdg / "kobokit" / CONFIG_NAME
-        return p if p.is_file() else None
+        p = xdg / "epubkit" / CONFIG_NAME
+        if p.is_file():
+            return p
+        old = legacy.old_config_path()
+        if old:
+            legacy.notice("using %s; rename it to %s" % (old, CONFIG_NAME))
+        return old
 
     def _merge_file(self, path: Path) -> Config:
         try:
@@ -236,7 +254,7 @@ class Config:
         )
 
     def _merge_env(self) -> Config:
-        """KOBOKIT_AI_PROVIDER, KOBOKIT_PATHS_OUTPUT, and so on."""
+        """EPUBKIT_AI_PROVIDER, EPUBKIT_PATHS_OUTPUT, and so on."""
         sections = {"ai": self.ai, "metadata": self.metadata,
                     "convert": self.convert, "recaps": self.recaps,
                     "validate": self.validate, "run": self.run}
@@ -244,18 +262,19 @@ class Config:
         for name, obj in sections.items():
             updates = {}
             for f in obj.__dataclass_fields__:                # type: ignore[attr-defined]
-                env = "%s%s_%s" % (ENV_PREFIX, name.upper(), f.upper())
-                if env in os.environ:
-                    updates[f] = _coerce(getattr(obj, f), os.environ[env])
+                suffix = "%s_%s" % (name.upper(), f.upper())
+                val = _env(suffix)
+                if val is not None:
+                    updates[f] = _coerce(getattr(obj, f), val)
             if updates:
                 out[name] = replace(obj, **updates)
 
         paths = self.paths
         pu = {}
         for f in ("source", "output", "work", "backup"):
-            env = "%sPATHS_%s" % (ENV_PREFIX, f.upper())
-            if env in os.environ:
-                pu[f] = Path(os.environ[env])
+            val = _env("PATHS_%s" % f.upper())
+            if val is not None:
+                pu[f] = Path(val)
         if pu:
             paths = replace(paths, **pu)
 

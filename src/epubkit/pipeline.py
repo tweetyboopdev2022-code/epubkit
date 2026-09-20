@@ -11,6 +11,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from . import legacy
 from .config import Config
 from .stages import report as report_stage
 from .stages.base import Context
@@ -21,7 +22,7 @@ from .stages.metadata import MetadataStage
 from .stages.recaps import RecapStage
 from .stages.repair import RepairStage
 from .stages.validate import ValidateStage
-from .state import RunState, fingerprint
+from .state import STATE_NAME, RunState, fingerprint
 
 STAGE_CLASSES = {
     "ingest": IngestStage,
@@ -90,7 +91,8 @@ class Pipeline:
         out.mkdir(parents=True, exist_ok=True)
         work_root.mkdir(parents=True, exist_ok=True)
 
-        state = RunState(work_root / "kobokit-state.json")
+        legacy.adopt_state(work_root, STATE_NAME)
+        state = RunState(work_root / STATE_NAME)
         books = find_books(cfg.paths.source,
                            exclude=(out, work_root, cfg.paths.backup))
         self.log.info("%d book(s) found in %s", len(books), cfg.paths.source)

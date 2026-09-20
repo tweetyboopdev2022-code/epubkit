@@ -7,9 +7,9 @@ import zipfile
 import pytest
 from conftest import make_epub
 
-from kobokit.config import Config
-from kobokit.pipeline import Pipeline, find_books
-from kobokit.stages.base import Stage, StageResult
+from epubkit.config import Config
+from epubkit.pipeline import Pipeline, find_books
+from epubkit.stages.base import Stage, StageResult
 
 
 def cfg_for(src, out, **over):
@@ -21,7 +21,7 @@ def cfg_for(src, out, **over):
 
 
 def run(cfg, stages=None):
-    log = logging.getLogger("kobokit.test")
+    log = logging.getLogger("epubkit.test")
     p = Pipeline(cfg, log)
     if stages is not None:
         p.stages = stages
@@ -68,7 +68,7 @@ def test_the_original_is_never_modified(library, tmp_path):
 def test_originals_are_backed_up(library, tmp_path):
     out = tmp_path / "lib"
     run(cfg_for(library, out))
-    kept = {p.name for p in (out / ".kobokit-originals").glob("*.epub")}
+    kept = {p.name for p in (out / ".epubkit-originals").glob("*.epub")}
     assert kept == {"Book One.epub", "Book Two.epub"}
 
 
@@ -118,7 +118,7 @@ def test_a_book_that_fails_a_stage_is_not_written(library, tmp_path):
 def test_work_directory_is_cleaned_up(library, tmp_path):
     out = tmp_path / "lib"
     run(cfg_for(library, out))
-    leftovers = [p for p in (out / ".kobokit-work").iterdir() if p.is_dir()]
+    leftovers = [p for p in (out / ".epubkit-work").iterdir() if p.is_dir()]
     assert leftovers == []
 
 
@@ -145,7 +145,7 @@ def test_workers_greater_than_one_still_processes_everything(library, tmp_path):
 
 
 def test_books_are_renamed_from_their_metadata(library, tmp_path, monkeypatch):
-    monkeypatch.setattr("kobokit.stages.metadata.MetadataStage._catalogue",
+    monkeypatch.setattr("epubkit.stages.metadata.MetadataStage._catalogue",
                         lambda self, *a: {})
     out = tmp_path / "lib"
     cfg = cfg_for(library, out, **{
@@ -199,7 +199,7 @@ def test_the_library_inside_the_source_is_not_re_ingested(tmp_path):
     out = src / "Ready for Kobo"
     out.mkdir(parents=True)
     make_epub(out / "One - Author.kepub.epub", "One")      # a previous run
-    make_epub(out / ".kobokit-originals" / "One.epub", "One")
+    make_epub(out / ".epubkit-originals" / "One.epub", "One")
 
     found = [p.name for p in find_books(src, exclude=(out,))]
     assert found == ["One.epub"]
@@ -220,5 +220,5 @@ def test_a_run_into_a_nested_library_stays_the_same_size(tmp_path):
 
 def test_hidden_directories_are_skipped(tmp_path):
     make_epub(tmp_path / "Real.epub")
-    make_epub(tmp_path / ".kobokit-work" / "scratch.epub")
+    make_epub(tmp_path / ".epubkit-work" / "scratch.epub")
     assert [p.name for p in find_books(tmp_path)] == ["Real.epub"]

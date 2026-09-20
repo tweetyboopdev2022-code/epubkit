@@ -14,7 +14,7 @@ notice it is gone, and the new file has to arrive as a book it has not seen.
 
 A Kobo ignores series information inside a sideloaded file entirely, unless the
 NickelSeries mod is installed. Series only shows up if it is written into the
-device's own database. This is why kobokit puts the series in the **filename**
+device's own database. This is why epubkit puts the series in the **filename**
 as well as in the OPF: the filename is what sorts in a folder listing, and it
 is the only part the device cannot ignore.
 
@@ -37,7 +37,7 @@ Set only the first group and you get a book showing 51% on the home screen and
 id="kobo.12.4">` — inside the book's own XHTML. It is a direct reference. Move
 that span, renumber it, or rebuild the document it lives in, and the reader
 resumes somewhere else. This is the single hardest constraint on rewriting a
-book, and it is why kobokit's content gate counts every koboSpan before and
+book, and it is why epubkit's content gate counts every koboSpan before and
 after and throws away any rewrite that lost one.
 
 If you restore positions from a snapshot, re-read the live database first. A

@@ -2,7 +2,7 @@
 
 Deliberately built on urllib rather than each vendor's SDK. This tool runs on
 a Kobo owner's laptop, sometimes inside a restricted VM, and the value of
-`pip install kobokit` pulling in nothing at all is worth more here than the
+`pip install epubkit` pulling in nothing at all is worth more here than the
 convenience of a client library. The request shapes used are the stable,
 documented ones.
 """

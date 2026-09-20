@@ -80,7 +80,7 @@ def detect_omnibus(ctx: Context, book: Path) -> None:
         ctx.note("this looks like %d books in one file: %s"
                  % (len(ctx.record.omnibus),
                     "; ".join(ctx.record.omnibus[:4])))
-        ctx.note("left whole. `kobokit split` on this file splits it.")
+        ctx.note("left whole. `epubkit split` on this file splits it.")
         ctx.record.ran("plan_omnibus",
                        "%d books detected" % len(ctx.record.omnibus))
     else:

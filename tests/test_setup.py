@@ -6,10 +6,10 @@ import builtins
 import pytest
 from conftest import make_epub
 
-from kobokit import configedit as ce
-from kobokit import deps, wizard
-from kobokit.cli import EXAMPLE_CONFIG
-from kobokit.config import Config, ConfigError
+from epubkit import configedit as ce
+from epubkit import deps, wizard
+from epubkit.cli import EXAMPLE_CONFIG
+from epubkit.config import Config, ConfigError
 
 
 def answers(monkeypatch, *replies):
@@ -30,7 +30,7 @@ def answers(monkeypatch, *replies):
 def test_wizard_writes_a_config_that_loads(tmp_path, monkeypatch):
     src = tmp_path / "books"
     make_epub(src / "One.epub")
-    target = tmp_path / "kobokit.toml"
+    target = tmp_path / "epubkit.toml"
     monkeypatch.setattr(wizard, "ollama_models",
                         lambda *a, **k: ["qwen3:8b", "llama3.1:latest"])
     answers(monkeypatch,
@@ -58,8 +58,8 @@ def test_wizard_offers_the_models_the_server_really_has(tmp_path, monkeypatch):
     monkeypatch.setattr(wizard, "ollama_models", lambda *a, **k: ["only-this:8b"])
     answers(monkeypatch, str(src), str(tmp_path / "lib"), "1",
             "http://box:11434", "1", "n", "y")
-    wizard.run(tmp_path / "kobokit.toml")
-    assert Config.load(tmp_path / "kobokit.toml").ai.model == "only-this:8b"
+    wizard.run(tmp_path / "epubkit.toml")
+    assert Config.load(tmp_path / "epubkit.toml").ai.model == "only-this:8b"
 
 
 def test_wizard_rejects_a_source_folder_that_is_not_there(tmp_path, monkeypatch):
@@ -70,8 +70,8 @@ def test_wizard_rejects_a_source_folder_that_is_not_there(tmp_path, monkeypatch)
             str(src),                          # try again
             str(tmp_path / "lib"), "1", "http://box:11434", "n", "y")
     monkeypatch.setattr(wizard, "ollama_models", lambda *a, **k: [])
-    wizard.run(tmp_path / "kobokit.toml")
-    assert Config.load(tmp_path / "kobokit.toml").paths.source == src.resolve()
+    wizard.run(tmp_path / "epubkit.toml")
+    assert Config.load(tmp_path / "epubkit.toml").paths.source == src.resolve()
 
 
 def test_wizard_will_not_let_the_library_be_the_source(tmp_path, monkeypatch):
@@ -83,8 +83,8 @@ def test_wizard_will_not_let_the_library_be_the_source(tmp_path, monkeypatch):
             str(src),                 # same folder: refused
             str(tmp_path / "lib"),    # and asked again
             "1", "http://box:11434", "n", "y")
-    wizard.run(tmp_path / "kobokit.toml")
-    cfg = Config.load(tmp_path / "kobokit.toml")
+    wizard.run(tmp_path / "epubkit.toml")
+    cfg = Config.load(tmp_path / "epubkit.toml")
     assert cfg.paths.output != cfg.paths.source
 
 
@@ -94,7 +94,7 @@ def test_declining_at_the_end_writes_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(wizard, "ollama_models", lambda *a, **k: [])
     answers(monkeypatch, str(src), str(tmp_path / "lib"), "1",
             "http://box:11434", "y", "n")
-    target = tmp_path / "kobokit.toml"
+    target = tmp_path / "epubkit.toml"
     assert wizard.run(target) == 1
     assert not target.exists()
 
@@ -105,14 +105,14 @@ def test_ctrl_c_is_not_a_crash(tmp_path, monkeypatch):
 
     monkeypatch.setattr(builtins, "input", interrupt)
     with pytest.raises(wizard.Cancelled):
-        wizard.run(tmp_path / "kobokit.toml")
-    assert not (tmp_path / "kobokit.toml").exists()
+        wizard.run(tmp_path / "epubkit.toml")
+    assert not (tmp_path / "epubkit.toml").exists()
 
 
 # -- config get / set ------------------------------------------------------
 
 def test_set_keeps_the_comments(tmp_path):
-    p = tmp_path / "kobokit.toml"
+    p = tmp_path / "epubkit.toml"
     p.write_text(EXAMPLE_CONFIG)
     cfg = Config.load(p)
     ce.set_value(cfg, "ai.model", "qwen3:8b", p)
@@ -123,7 +123,7 @@ def test_set_keeps_the_comments(tmp_path):
 
 
 def test_set_understands_the_type_of_the_setting(tmp_path):
-    p = tmp_path / "kobokit.toml"
+    p = tmp_path / "epubkit.toml"
     p.write_text(EXAMPLE_CONFIG)
     for key, given, expected in (("run.workers", "4", 4),
                                  ("recaps.enabled", "false", False),
@@ -134,14 +134,14 @@ def test_set_understands_the_type_of_the_setting(tmp_path):
 
 
 def test_set_refuses_a_value_of_the_wrong_type(tmp_path):
-    p = tmp_path / "kobokit.toml"
+    p = tmp_path / "epubkit.toml"
     p.write_text(EXAMPLE_CONFIG)
     with pytest.raises(ConfigError, match="whole number"):
         ce.set_value(Config.load(p), "run.workers", "lots", p)
 
 
 def test_set_refuses_to_write_a_key(tmp_path):
-    p = tmp_path / "kobokit.toml"
+    p = tmp_path / "epubkit.toml"
     p.write_text(EXAMPLE_CONFIG)
     with pytest.raises(ConfigError, match="not kept in the config file"):
         ce.set_value(Config.load(p), "ai.api_key", "sk-real", p)
@@ -157,7 +157,7 @@ def test_a_misspelled_setting_is_named(tmp_path):
 
 
 def test_setting_a_section_the_file_lacks_adds_it(tmp_path):
-    p = tmp_path / "kobokit.toml"
+    p = tmp_path / "epubkit.toml"
     p.write_text('[ai]\nprovider = "ollama"\n')
     ce.set_value(Config.load(p), "convert.split_spreads", "always", p)
     assert Config.load(p).convert.split_spreads == "always"

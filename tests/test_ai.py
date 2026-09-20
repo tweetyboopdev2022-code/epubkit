@@ -9,9 +9,9 @@ import urllib.error
 
 import pytest
 
-from kobokit.ai import AIError, AIUnavailable, build
-from kobokit.ai.providers import AnthropicProvider, OllamaProvider, OpenAIProvider
-from kobokit.config import AIConfig
+from epubkit.ai import AIError, AIUnavailable, build
+from epubkit.ai.providers import AnthropicProvider, OllamaProvider, OpenAIProvider
+from epubkit.config import AIConfig
 
 
 def test_anthropic_request_and_parse(monkeypatch):

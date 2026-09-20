@@ -10,12 +10,12 @@ import shutil
 
 #: module -> (what it is for, what to install)
 OPTIONAL = {
-    "lxml": ("rewriting books to EPUB 3", 'pip install "kobokit[full]"'),
-    "PIL": ("covers and page images", 'pip install "kobokit[full]"'),
-    "pymupdf": ("reading PDFs", 'pip install "kobokit[pdf]"'),
+    "lxml": ("rewriting books to EPUB 3", 'pip install "epubkit[full]"'),
+    "PIL": ("covers and page images", 'pip install "epubkit[full]"'),
+    "pymupdf": ("reading PDFs", 'pip install "epubkit[pdf]"'),
     "numpy": ("cropping pages of fixed-layout PDFs",
-              'pip install "kobokit[pdf]"'),
-    "mobi": ("converting MOBI and AZW3", 'pip install "kobokit[mobi]"'),
+              'pip install "epubkit[pdf]"'),
+    "mobi": ("converting MOBI and AZW3", 'pip install "epubkit[mobi]"'),
 }
 
 #: the modules each conversion route needs before it can run at all
@@ -83,7 +83,7 @@ def extras_for(modules) -> list[str]:
 def install_command(modules) -> list[str] | None:
     """The pip command that would install what is missing, or None.
 
-    It installs into the interpreter running kobokit, whatever that is - a
+    It installs into the interpreter running epubkit, whatever that is - a
     venv, a uv tool environment, or the system Python. Calling pip by module
     on sys.executable is what makes that true; a bare `pip` on the PATH may
     well belong to a different Python entirely, which is exactly how someone
@@ -95,6 +95,6 @@ def install_command(modules) -> list[str] | None:
     import sys
     from pathlib import Path
     root = Path(__file__).resolve().parent.parent.parent
-    target = str(root) if (root / "pyproject.toml").is_file() else "kobokit"
+    target = str(root) if (root / "pyproject.toml").is_file() else "epubkit"
     return [sys.executable, "-m", "pip", "install",
             "%s[%s]" % (target, ",".join(extras))]

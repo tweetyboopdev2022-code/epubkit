@@ -1,4 +1,4 @@
-# kobokit
+# epubkit
 
 Point it at a folder of downloaded books. Get back a library your Kobo will
 open without complaint: converted to EPUB, metadata filled in and filenames
@@ -14,7 +14,7 @@ learned by breaking something first.
 
 ## Install
 
-kobokit needs **Python 3.10 or newer**, and it is worth checking which Python
+epubkit needs **Python 3.10 or newer**, and it is worth checking which Python
 you are about to use before anything else:
 
 ```sh
@@ -24,8 +24,8 @@ python3 -V
 Install it into an environment of its own:
 
 ```sh
-python3 -m venv ~/.venvs/kobokit
-~/.venvs/kobokit/bin/pip install -e ".[full,pdf]"
+python3 -m venv ~/.venvs/epubkit
+~/.venvs/epubkit/bin/pip install -e ".[full,pdf]"
 ```
 
 `full` is lxml and EPUBCheck — the repair and validation path, and what makes
@@ -36,9 +36,9 @@ rather than failing the run.
 Then either put it on your PATH or alias it:
 
 ```sh
-ln -s ~/.venvs/kobokit/bin/kobokit ~/bin/kobokit     # if ~/bin is on your PATH
+ln -s ~/.venvs/epubkit/bin/epubkit ~/bin/epubkit     # if ~/bin is on your PATH
 # or, in ~/.zshrc or ~/.bashrc:
-alias kobokit="$HOME/.venvs/kobokit/bin/kobokit"
+alias epubkit="$HOME/.venvs/epubkit/bin/epubkit"
 ```
 
 If you have `uv`, all of that collapses to one line, and it fetches a suitable
@@ -48,9 +48,9 @@ Python itself:
 uv tool install --editable ".[full,pdf]"
 ```
 
-`kobokit doctor` tells you which of these you have, route by route, and
-`kobokit doctor --fix` installs the missing ones into whichever environment
-kobokit itself is running in — which matters, because a bare `pip` on your PATH
+`epubkit doctor` tells you which of these you have, route by route, and
+`epubkit doctor --fix` installs the missing ones into whichever environment
+epubkit itself is running in — which matters, because a bare `pip` on your PATH
 often belongs to a different Python, and that is how you install something
 successfully and still get told it is missing. It always shows the command and
 asks first.
@@ -72,14 +72,14 @@ this whole pipeline exists to pass. Worth confirming before a long run.
 **`ERROR: File "setup.py" or "setup.cfg" not found ... editable mode currently
 requires a setuptools-based build`** — you are on Xcode's bundled Python. It
 is 3.9 with a pip from 2021: too old to install a `pyproject.toml`-only
-project, and below the version kobokit needs in any case. Install a real
+project, and below the version epubkit needs in any case. Install a real
 Python (`brew install python@3.12`) and use that to make the venv.
 
-**`zsh: command not found: kobokit` right after creating the symlink** — two
+**`zsh: command not found: epubkit` right after creating the symlink** — two
 candidates, and this tells you which:
 
 ```sh
-~/.venvs/kobokit/bin/kobokit --version
+~/.venvs/epubkit/bin/epubkit --version
 ```
 
 If that prints a version, the install is fine and it is a PATH problem: either
@@ -96,26 +96,26 @@ command line tools: `xcode-select --install`.
 ## Use
 
 ```sh
-kobokit init      # asks a few questions and writes the config for you
-kobokit doctor    # checks the pieces are installed
-kobokit check     # confirms the config works and pings the model
-kobokit run
+epubkit init      # asks a few questions and writes the config for you
+epubkit doctor    # checks the pieces are installed
+epubkit check     # confirms the config works and pings the model
+epubkit run
 ```
 
-`kobokit init` is a guided setup rather than a file to edit. It counts the
+`epubkit init` is a guided setup rather than a file to edit. It counts the
 books in the folder you give it, refuses a library folder that is the same as
 the source, and — for a local model — asks the server which models it actually
 has and lets you pick from that list, which is where a typed-from-memory model
-name usually goes wrong. `kobokit init --defaults` writes the example config
+name usually goes wrong. `epubkit init --defaults` writes the example config
 without asking anything, for scripts.
 
 To change one setting afterwards, no editor needed:
 
 ```sh
-kobokit config list                        # every setting and its value
-kobokit config get ai.model
-kobokit config set ai.model qwen3:8b
-kobokit config set convert.split_spreads always
+epubkit config list                        # every setting and its value
+epubkit config get ai.model
+epubkit config set ai.model qwen3:8b
+epubkit config set convert.split_spreads always
 ```
 
 Values are typed to match the setting, so `run.workers lots` is refused rather
@@ -125,19 +125,19 @@ API key is refused outright — those belong in the environment.
 Or skip the config file entirely:
 
 ```sh
-kobokit run --in ~/Downloads/books --out ~/Books/kobo \
+epubkit run --in ~/Downloads/books --out ~/Books/kobo \
             --provider anthropic --model claude-sonnet-4-5 --workers 4
 ```
 
 Other things you will want:
 
 ```sh
-kobokit run --no-recaps               # structure and metadata only
-kobokit run --only validate --in ~/Books/kobo   # re-check a built library
-kobokit run --allow-imperfect         # ship books that improved but aren't clean
-kobokit run -n                        # say what would happen, touch nothing
-kobokit validate ~/Books/kobo         # EPUBCheck a folder, one line per book
-kobokit recaps "Some Book.epub"       # recaps for one book
+epubkit run --no-recaps               # structure and metadata only
+epubkit run --only validate --in ~/Books/kobo   # re-check a built library
+epubkit run --allow-imperfect         # ship books that improved but aren't clean
+epubkit run -n                        # say what would happen, touch nothing
+epubkit validate ~/Books/kobo         # EPUBCheck a folder, one line per book
+epubkit recaps "Some Book.epub"       # recaps for one book
 ```
 
 Runs are resumable. A book already recorded as done — same size, same content
@@ -155,7 +155,7 @@ the pages intact, because reflowing one of those produces garbage.
 
 Wide pages are split. A landscape page in a picture book is nearly always a
 two-page spread photographed whole, and left as one page it puts both halves
-at half size on a six-inch screen. kobokit measures the page shape and splits
+at half size on a six-inch screen. epubkit measures the page shape and splits
 anything wide enough to be a spread.
 
 By default a page is left whole where the artwork runs across the gutter — a
@@ -205,7 +205,7 @@ collapsed so one character is one person rather than three.
 
 A file that holds several books is detected and named in the report, not
 split — a wrong boundary produces a book missing its first chapter and another
-with two, and neither announces itself. `kobokit split BOOK.epub` works out
+with two, and neither announces itself. `epubkit split BOOK.epub` works out
 the boundaries and shows you the plan; `--apply` writes the parts once you
 have read it.
 
@@ -225,7 +225,7 @@ rather than invisible.
 a config file is rejected at load: config files get committed, environment
 variables do not.
 
-`kobokit check` pings the endpoint and tells you if the model is missing before
+`epubkit check` pings the endpoint and tells you if the model is missing before
 you start a four-hour run. Do that first, every time — it is the difference
 between finding out now and finding out in the third hour.
 
@@ -233,13 +233,13 @@ The Ollama endpoint does not have to be local. Pointing it at another machine
 on your network, or across a VPN, is the same flag:
 
 ```sh
-kobokit check --provider ollama --model qwen3:8b --endpoint http://10.0.0.5:11434
+epubkit check --provider ollama --model qwen3:8b --endpoint http://10.0.0.5:11434
 ```
 
 ### Reasoning models
 
 qwen3, deepseek-r1 and their relatives narrate their thinking before they
-answer. kobokit asks for that to be turned off, strips any that arrives
+answer. epubkit asks for that to be turned off, strips any that arrives
 anyway, and reads the model's *last* complete JSON object rather than
 everything between the first brace and the last — a reasoning model quotes the
 answer shape to itself on the way past, and the span between the two braces is
@@ -249,12 +249,34 @@ If you are running one of these on a single GPU, set `concurrency = 1` under
 `[ai]`. Parallel requests queue behind each other on one card, so the default
 of 2 buys nothing and can push a model into swapping.
 
+
+## Coming from kobokit
+
+epubkit was called kobokit until September 2026. The name `kobokit` now
+belongs to a different tool (an installer that sets up a Kobo), so nothing here
+answers to it any more: there is no `kobokit` command and no `kobokit` Python
+package in epubkit. Everything you already have on disk keeps working, though.
+Nothing is moved or rewritten, and each old name prints one notice saying what
+to rename:
+
+| Old | New | What happens if you leave it |
+|---|---|---|
+| `kobokit.toml` (here or in `~/.config/kobokit/`) | `epubkit.toml` (`~/.config/epubkit/`) | still read; the new name wins if both exist |
+| `KOBOKIT_*` environment variables | `EPUBKIT_*` | still read; the new name wins if both are set |
+| `<library>/.kobokit-work` | `.epubkit-work` | used in place, so an interrupted run resumes |
+| `<library>/.kobokit-originals` | `.epubkit-originals` | used in place; your originals are never moved |
+| `kobokit-state.json` | `epubkit-state.json` | copied to the new name on the next run |
+
+To finish the move, rename those yourself when convenient, and remove the old
+install (`pip uninstall kobokit`, or delete the virtualenv it lived in) before
+installing the new kobokit, so the two commands do not collide.
+
 ## Configuration
 
-Defaults, then `kobokit.toml`, then `KOBOKIT_*` environment variables, then
-command-line flags — each layer overriding the one before it. kobokit looks for
-`kobokit.toml` beside the library, in the current directory, and in
-`~/.config/kobokit/`. An unrecognised setting is an error that names the
+Defaults, then `epubkit.toml`, then `EPUBKIT_*` environment variables, then
+command-line flags — each layer overriding the one before it. epubkit looks for
+`epubkit.toml` beside the library, in the current directory, and in
+`~/.config/epubkit/`. An unrecognised setting is an error that names the
 setting rather than being ignored silently.
 
 ## Safety
@@ -271,4 +293,4 @@ Deploying to the device is deliberately not part of this pipeline.
 ## Licence
 
 MIT.
-# kobokit
+# epubkit
