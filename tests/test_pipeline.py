@@ -173,6 +173,36 @@ def test_a_novel_comes_out_as_a_kepub(library, tmp_path):
         assert spans > 0
 
 
+def test_a_book_that_is_already_a_kepub_gets_the_name_of_one(tmp_path):
+    """Cut from a kepub (a split omnibus) it has the koboSpans but not the name;
+    a Kobo would open `x.epub` as a plain EPUB."""
+    import zipfile as _z
+    src, out = tmp_path / "in", tmp_path / "lib"
+    src.mkdir()
+    book = make_epub(src / "Part One.epub", "Part One")
+    with _z.ZipFile(book, "a") as z:
+        z.writestr("OEBPS/k.xhtml", '<html><body><span class="koboSpan" '
+                   'id="kobo.1.1">x</span></body></html>')
+    cfg = cfg_for(src, out, **{"run.stages": ("ingest", "kepub")})
+    run(cfg)
+    assert [p.name for p in out.glob("*.epub")] == ["Part One.kepub.epub"]
+    with _z.ZipFile(out / "Part One.kepub.epub") as z:
+        assert any(b"koboSpan" in z.read(n) for n in z.namelist()
+                   if n.endswith(".xhtml"))
+
+
+def test_a_kepub_that_already_has_the_name_is_left_alone(tmp_path):
+    import zipfile as _z
+    src, out = tmp_path / "in", tmp_path / "lib"
+    src.mkdir()
+    book = make_epub(src / "Done.kepub.epub", "Done")
+    with _z.ZipFile(book, "a") as z:
+        z.writestr("OEBPS/k.xhtml", '<html><body><span class="koboSpan" '
+                   'id="kobo.1.1">x</span></body></html>')
+    run(cfg_for(src, out, **{"run.stages": ("ingest", "kepub")}))
+    assert [p.name for p in out.glob("*.epub")] == ["Done.kepub.epub"]
+
+
 def test_kepub_can_be_turned_off(library, tmp_path):
     out = tmp_path / "lib"
     cfg = cfg_for(library, out, **{"convert.kepub": False,
@@ -222,3 +252,4 @@ def test_hidden_directories_are_skipped(tmp_path):
     make_epub(tmp_path / "Real.epub")
     make_epub(tmp_path / ".epubkit-work" / "scratch.epub")
     assert [p.name for p in find_books(tmp_path)] == ["Real.epub"]
+

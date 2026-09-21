@@ -31,6 +31,25 @@ def _span_count(path: Path) -> int:
     return n
 
 
+def _kepub_named(ctx: Context, book: Path) -> Path | None:
+    """Give a book that is a kepub inside a `.kepub.epub` name.
+
+    A Kobo goes by the name: `x.epub` is opened as a plain EPUB even when its
+    text is full of koboSpans. That happens to anything cut from a kepub - a
+    split omnibus, say - so a book that already is one gets the name it needs.
+    Only the name changes; the bytes are the ones repaired above.
+    """
+    if book.name.lower().endswith(".kepub.epub") or not book.name.lower().endswith(".epub"):
+        return None
+    target = book.with_name(book.name[:-len(".epub")] + ".kepub.epub")
+    if target.exists():
+        ctx.note("left the name alone: %s already exists" % target.name)
+        return None
+    book.rename(target)
+    ctx.note("renamed to %s so the Kobo opens it as a kepub" % target.name)
+    return target
+
+
 class KepubStage(Stage):
     name = "kepub"
 
@@ -65,7 +84,7 @@ class KepubStage(Stage):
                  % after)
         if r.returncode != 0:
             ctx.note("repair_kepub exited %d" % r.returncode)
-        return StageResult()
+        return StageResult(path=_kepub_named(ctx, book))
 
     def _convert(self, ctx: Context, book: Path) -> StageResult:
         out_dir = ctx.work / "kepub"
