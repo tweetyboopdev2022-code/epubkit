@@ -82,8 +82,10 @@ class RecapStage(Stage):
             return (idx, href, summary, cast) if summary else None
 
         workers = max(1, min(cfg.concurrency, len(chapters)))
+        ctx.report("chapter 0/%d" % len(chapters))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            for got in pool.map(one, chapters):
+            for done, got in enumerate(pool.map(one, chapters), 1):
+                ctx.report("chapter %d/%d" % (done, len(chapters)))
                 if got:
                     idx, href, summary, cast = got
                     results[idx] = (href, summary, cast)
