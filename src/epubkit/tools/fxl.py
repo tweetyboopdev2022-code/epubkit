@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Build a Kobo fixed-layout .kepub.epub from a folder of page images."""
-import os, zipfile, html, uuid
+import html
+import os
+import uuid
+import zipfile
+
 from PIL import Image
 
 # Panel size of the target device. Clara Colour / Clara HD / Clara 2E are
@@ -122,13 +126,16 @@ def build(images, out_path, md, quality=88):
                 '    <navPoint id="n%d" playOrder="%d"><navLabel><text>%s</text></navLabel>'
                 '<content src="p%04d.xhtml"/></navPoint>' % (i + 1, len(navpoints) + 1, esc(label), i + 1))
 
-    uid = 'urn:uuid:' + str(uuid.uuid5(uuid.NAMESPACE_URL, md['title']))
+    # Keep the book's own identifier (an ISBN, say) when the caller has one, so the
+    # rebuilt file is still recognisably the same book; otherwise derive a stable one.
+    uid = md.get('identifier') or 'urn:uuid:' + str(uuid.uuid5(uuid.NAMESPACE_URL, md['title']))
     meta = ['    <dc:identifier id="bookid">%s</dc:identifier>' % uid,
             '    <dc:title id="t1">%s</dc:title>' % esc(md['title']),
             '    <dc:language>en</dc:language>']
     for k, (nm, fa) in enumerate(md['authors'], 1):
-        meta.append('    <dc:creator id="cr%d" opf:role="aut" opf:file-as="%s">%s</dc:creator>'
-                    % (k, esc(fa), esc(nm)))
+        # EPUB 3 states role and file-as with the refines metas below; the EPUB 2
+        # opf:role / opf:file-as attributes are not allowed here and fail EPUBCheck.
+        meta.append('    <dc:creator id="cr%d">%s</dc:creator>' % (k, esc(nm)))
         meta.append('    <meta refines="#cr%d" property="file-as">%s</meta>' % (k, esc(fa)))
         meta.append('    <meta refines="#cr%d" property="role" scheme="marc:relators">aut</meta>' % k)
     if md.get('publisher'):
@@ -152,7 +159,7 @@ def build(images, out_path, md, quality=88):
     meta.append('    <meta property="dcterms:modified">%s</meta>' % MOD)
 
     opf = ('<?xml version="1.0" encoding="utf-8"?>\n'
-           '<package xmlns="http://www.idpf.org/2007/opf" xmlns:opf="http://www.idpf.org/2007/opf" '
+           '<package xmlns="http://www.idpf.org/2007/opf" '
            'version="3.0" unique-identifier="bookid" prefix="rendition: http://www.idpf.org/vocab/rendition/#">\n'
            '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">\n%s\n  </metadata>\n'
            '  <manifest>\n%s\n'
