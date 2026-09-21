@@ -140,6 +140,14 @@ epubkit validate ~/Books/kobo         # EPUBCheck a folder, one line per book
 epubkit recaps "Some Book.epub"       # recaps for one book
 ```
 
+In a terminal, `epubkit run` shows what it is doing as it goes: a bar of books
+finished with an estimate of the time left, and a line for each book being
+worked on — its stage, how long it has been in it, and for recaps, which chapter
+it has reached. The spinner and clocks keep moving through the slow stages
+(EPUBCheck, and recaps above all), so a long wait looks like work rather than a
+hang. Redirected or piped output, `TERM=dumb` and `--plain` get the old one line
+per book instead.
+
 Runs are resumable. A book already recorded as done — same size, same content
 fingerprint — is skipped on the next run. `--no-resume` forces it through.
 
