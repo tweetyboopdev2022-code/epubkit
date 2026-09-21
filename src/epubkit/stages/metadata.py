@@ -14,6 +14,7 @@ import json
 import re
 from pathlib import Path
 
+from ..library_hint import recommend
 from .base import Context, Stage, StageResult, run_tool
 
 #: Asking a model for facts invites invention, so the prompt is narrow and the
@@ -50,6 +51,8 @@ class MetadataStage(Stage):
         needs = _missing(current, ctx.config.metadata.overwrite_existing)
         if needs:
             found = self._catalogue(ctx, book, current, needs)
+            current["subjects"] = _merged(current.get("subjects"),
+                                          found.pop("subjects", None))
             current.update({k: v for k, v in found.items() if v})
             needs = _missing(current, ctx.config.metadata.overwrite_existing)
 
@@ -99,7 +102,25 @@ class MetadataStage(Stage):
         ctx.record.authors = ", ".join(current.get("authors") or []) or None
         ctx.record.series = current.get("series")
         ctx.record.series_index = current.get("series_index")
+        self._suggest_library(ctx, book, current)
         return StageResult(path=renamed)
+
+    def _suggest_library(self, ctx: Context, book: Path, current: dict) -> None:
+        """Kids, Teens or Adult, from what the book or a catalogue says."""
+        subjects = list(current.get("subjects") or [])
+        description = current.get("description")
+        if not subjects and ctx.config.metadata.sources:
+            # a book that stated everything else never reached the catalogue, so
+            # ask once now, for the subjects and the blurb only
+            found = self._catalogue(ctx, book, current, [])
+            subjects = _merged(subjects, found.get("subjects"))
+            description = description or found.get("description")
+        s = recommend(subjects, description, current.get("title"),
+                      current.get("series"))
+        ctx.record.shelf = s.label()
+        ctx.record.shelf_confidence = s.confidence
+        ctx.record.shelf_why = "; ".join(s.reasons)
+        ctx.note("suggested library: %s (%s)" % (s.label(), s.confidence))
 
     # ------------------------------------------------------------------
 
@@ -132,6 +153,7 @@ class MetadataStage(Stage):
             "series_index": entry.get("series_index") or entry.get("position"),
             "description": entry.get("description"),
             "date": (dates[0] if isinstance(dates, list) and dates else dates),
+            "subjects": [s for s in (entry.get("subjects") or []) if s],
         }
 
     def _catalogue(self, ctx: Context, book: Path, current: dict,
@@ -152,6 +174,7 @@ class MetadataStage(Stage):
             "series_index": filled.get("series_index"),
             "description": filled.get("description"),
             "date": filled.get("date"),
+            "subjects": filled.get("subjects"),
         }
         authors = filled.get("authors")
         if authors:
@@ -238,6 +261,14 @@ def _has_cover(book: Path) -> bool:
             return any(z.getinfo(n).file_size > 2000 for n in candidates)
     except (zipfile.BadZipFile, OSError, KeyError):
         return True          # unreadable is not the same as coverless
+
+
+def _merged(a, b) -> list[str]:
+    out: list[str] = []
+    for s in list(a or []) + list(b or []):
+        if s and s not in out:
+            out.append(s)
+    return out
 
 
 def _missing(meta: dict, overwrite: bool) -> list[str]:

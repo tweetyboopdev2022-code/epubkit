@@ -63,6 +63,11 @@ class BookRecord:
     structural: list[str] = field(default_factory=list)
     #: titles of the books inside, when this file holds more than one
     omnibus: list[str] = field(default_factory=list)
+    #: which library the book looks suited to (Kids | Teens | Adult), why, and
+    #: how sure that is. A suggestion for the report; nothing acts on it.
+    shelf: str | None = None
+    shelf_confidence: str = ""
+    shelf_why: str = ""
     #: tool -> ran | skipped: <why it did not apply>. A step that quietly
     #: does nothing is the failure mode this exists to make visible.
     tools: dict[str, str] = field(default_factory=dict)
