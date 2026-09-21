@@ -391,10 +391,14 @@ def _cmd_split(args) -> int:
 
     if not args.plan:
         from .stages.base import run_tool
+        # the plan is written into --out, which may not exist yet
+        plan.parent.mkdir(parents=True, exist_ok=True)
         r = run_tool("plan_omnibus", [str(book), "--out", str(plan)],
                      timeout=900)
         print(r.stdout or r.stderr or "")
         if r.returncode != 0:
+            if r.stdout and r.stderr:
+                print(r.stderr, file=sys.stderr)
             return 1
         if "no omnibus structure found" in (r.stdout or ""):
             return 1
