@@ -35,6 +35,43 @@ def shelf_checks(out_dir: Path) -> list[str]:
             if "artwork is missing" in ln]
 
 
+_SHELF_ORDER = ("Kids", "Teens", "Adult")
+
+
+def _library_section(done) -> list[str]:
+    """Which library each new book looks suited to, grouped for uploading.
+
+    Only a suggestion. Kids and Teens need the book or a catalogue to have said
+    so; without that a book is put down as Adult, and any that are not clearly
+    settled are marked for a look before they are added.
+    """
+    rated = [b for b in done if b.shelf]
+    if not rated:
+        return []
+    L = ["## Suggested libraries", "",
+         "A suggestion from the book's own subjects and description, or a "
+         "catalogue's. Kids and Teens are only suggested when the book says "
+         "it is for younger readers; anything else is Adult. Check the ones "
+         "marked *check* before adding them, especially before anything goes "
+         "into Kids.", ""]
+    for lib in _SHELF_ORDER:
+        group = [b for b in rated if b.shelf.split(" › ")[0] == lib]
+        if not group:
+            continue
+        L.append("**%s** (%d)" % (lib, len(group)))
+        for b in group:
+            name = b.title or Path(b.source).name
+            by = " — %s" % b.authors if b.authors else ""
+            place = b.shelf.split(" › ")[1] if " › " in b.shelf else ""
+            bits = [x for x in (place, b.shelf_why) if x]
+            flag = " *check*" if b.shelf_confidence == "low" or \
+                (lib != "Adult" and b.shelf_confidence != "high") else ""
+            L.append("- %s%s%s%s" % (name, by,
+                                      " (%s)" % "; ".join(bits) if bits else "", flag))
+        L.append("")
+    return L
+
+
 def write(state: RunState, out_dir: Path, elapsed: float) -> Path:
     path = out_dir / "REPORT.md"
     books = sorted(state.books.values(), key=lambda r: (r.status, r.source))
@@ -90,6 +127,8 @@ def write(state: RunState, out_dir: Path, elapsed: float) -> Path:
                                                   b.errors_after or 0))
             if b.recaps:
                 L.append("  %d recaps" % b.recaps)
+            if b.shelf:
+                L.append("  **suggested library: %s**" % b.shelf)
             if b.omnibus:
                 L.append("  holds %d books: %s"
                          % (len(b.omnibus), "; ".join(b.omnibus[:6])))
@@ -98,6 +137,8 @@ def write(state: RunState, out_dir: Path, elapsed: float) -> Path:
             for n in b.notes:
                 L.append("  - %s" % n)
             L.append("")
+
+    L.extend(_library_section(done))
 
     missing_art = shelf_checks(out_dir)
     if missing_art:
