@@ -253,3 +253,21 @@ def test_hidden_directories_are_skipped(tmp_path):
     make_epub(tmp_path / ".epubkit-work" / "scratch.epub")
     assert [p.name for p in find_books(tmp_path)] == ["Real.epub"]
 
+
+def test_split_creates_the_output_folder_for_its_plan(tmp_path, monkeypatch):
+    """`--out` did not exist, the plan could not be written, and the command
+    stopped without saying why."""
+    from epubkit import cli
+    book = make_epub(tmp_path / "Bundle.epub", "Bundle")
+    out = tmp_path / "does" / "not" / "exist"
+
+    def fake_tool(module, args, timeout=900, cwd=None):
+        plan = args[args.index("--out") + 1]
+        with open(plan, "w") as fh:                        # fails if the folder is missing
+            fh.write("{}")
+        return type("R", (), {"returncode": 0, "stderr": "",
+                              "stdout": "1. [ 1- 2] 2 pages  One\n"})()
+
+    monkeypatch.setattr("epubkit.stages.base.run_tool", fake_tool)
+    assert cli.main(["split", str(book), "--out", str(out)]) == 0
+    assert (out / "Bundle.split.json").is_file()
