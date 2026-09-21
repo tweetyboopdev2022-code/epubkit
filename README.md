@@ -184,8 +184,16 @@ reader resumes — those IDs are never touched.
 page numbers, reading statistics and a position it actually remembers — the
 device's `ChapterIDBookmarked` points straight at one of those spans. A book
 that arrived as a kepub is repaired rather than re-wrapped, because
-renumbering existing spans moves where the reader resumes. `convert.kepub =
-false` keeps everything as plain EPUB.
+renumbering existing spans moves where the reader resumes. A Kobo goes by the
+file name, so a book that is already a kepub inside but is called `x.epub` —
+anything cut out of a kepub, such as the parts of a split omnibus — is renamed
+`x.kepub.epub`; only the name changes. `convert.kepub = false` keeps everything
+as plain EPUB.
+
+The kepub step only runs if `kepub` is in `run.stages`. A `run.stages` list
+written by hand that leaves it out gives valid plain EPUBs with no error, so if
+books are not coming out as kepubs, check that list first
+(`epubkit config get run.stages`).
 
 **validate** runs EPUBCheck. By default a book with remaining errors is
 reported and not shipped; `--allow-imperfect` ships it when it is measurably
@@ -206,8 +214,14 @@ collapsed so one character is one person rather than three.
 A file that holds several books is detected and named in the report, not
 split — a wrong boundary produces a book missing its first chapter and another
 with two, and neither announces itself. `epubkit split BOOK.epub` works out
-the boundaries and shows you the plan; `--apply` writes the parts once you
-have read it.
+the boundaries and writes a plan next to the book (or into `--out`, which is
+created if needed); `--apply` writes the parts once you have read it. The plan
+comes out as a blank draft — capitalised titles, no author or series — so edit
+`title`, `authors` (as `["Name", "Sort, Name"]`) and `series` before applying,
+or the parts are written without them. The parts are plain `.epub` files; run
+epubkit on them afterwards and they get metadata, covers and their kepub name.
+Each part holds only its own range, so the bundle's cover, title and back-matter
+pages are not carried over.
 
 **report** writes per-book prose that says what was actually wrong with the
 book — not that a file was processed — and keeps damage the book arrived with
@@ -275,9 +289,13 @@ installing the new kobokit, so the two commands do not collide.
 
 Defaults, then `epubkit.toml`, then `EPUBKIT_*` environment variables, then
 command-line flags — each layer overriding the one before it. epubkit looks for
-`epubkit.toml` beside the library, in the current directory, and in
-`~/.config/epubkit/`. An unrecognised setting is an error that names the
-setting rather than being ignored silently.
+`epubkit.toml` in the current directory and then each folder above it, and
+after that in `~/.config/epubkit/`. That means a config kept inside the
+project is only found when you run from inside it; copy it to
+`~/.config/epubkit/` to use it from anywhere, or point at one with
+`epubkit run -c PATH`. `epubkit config list` names the file it is using. An
+unrecognised setting is an error that names the setting rather than being
+ignored silently.
 
 ## Safety
 
