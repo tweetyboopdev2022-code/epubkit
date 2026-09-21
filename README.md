@@ -227,6 +227,17 @@ pages are not carried over.
 book — not that a file was processed — and keeps damage the book arrived with
 separate from anything the pipeline introduced.
 
+The report also suggests a library for each new book — Kids, Teens or Adult
+(with Fiction or Non-fiction for Adult) — grouped so it can be used when adding
+them. It goes only on what the book or a catalogue actually says: a subject
+heading such as "Young adult fiction" or "Juvenile fiction", or a description
+that names its reader ("middle grade", "ages 8–12"). A description that merely
+mentions a teenager or a children's author does not count, because adult novels
+are full of both. Anything without such a signal is Adult, since a wrong Adult is
+a nuisance and a wrong Kids is a child's Kobo showing an adult book. Suggestions
+that are not clearly settled are marked *check*. It is advice only; nothing is
+moved.
+
 Every book goes through every step. A step that has nothing to do says why in
 the report — "slim: under the threshold (12 books)", "plan_omnibus: too short
 to be a bundle (9 books)" — so a step that quietly does nothing is visible
