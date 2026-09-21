@@ -13,6 +13,7 @@ from pathlib import Path
 
 from . import legacy
 from .config import Config
+from .progress import Progress
 from .stages import report as report_stage
 from .stages.base import Context
 from .stages.convert import ConvertStage
@@ -77,10 +78,11 @@ def find_books(root: Path, exclude=()) -> list[Path]:
 
 
 class Pipeline:
-    def __init__(self, config: Config, log, provider=None):
+    def __init__(self, config: Config, log, provider=None, progress=None):
         self.config = config
         self.log = log
         self.provider = provider
+        self.progress = progress or Progress()        # disabled unless given a live one
         self.stages = [STAGE_CLASSES[n]() for n in config.run.stages
                        if n in STAGE_CLASSES]
 
@@ -117,16 +119,20 @@ class Pipeline:
             return state
 
         workers = max(1, cfg.run.workers)
-        if workers == 1:
-            for b in todo:
-                self._one(b, state)
-        else:
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = {pool.submit(self._one, b, state): b for b in todo}
-                for f in as_completed(futures):
-                    exc = f.exception()
-                    if exc and not cfg.run.continue_on_error:
-                        raise exc
+        self.progress.begin(len(todo), workers)
+        try:
+            if workers == 1:
+                for b in todo:
+                    self._one(b, state)
+            else:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = {pool.submit(self._one, b, state): b for b in todo}
+                    for f in as_completed(futures):
+                        exc = f.exception()
+                        if exc and not cfg.run.continue_on_error:
+                            raise exc
+        finally:
+            self.progress.end()
 
         state.meta["elapsed"] = time.time() - started
         state.save()
@@ -143,13 +149,17 @@ class Pipeline:
         rec.stages = {}
         started = time.time()
         work = cfg.paths.work / _slug(source.name)
+        key = str(source)
+        self.progress.book_start(key, source.name)
 
         try:
             work.mkdir(parents=True, exist_ok=True)
             ctx = Context(config=cfg, record=rec, path=source, work=work,
-                          log=self.log, provider=self.provider)
+                          log=self.log, provider=self.provider,
+                          step=lambda text: self.progress.detail(key, text))
 
-            for stage in self.stages:
+            for i, stage in enumerate(self.stages, 1):
+                self.progress.stage(key, stage.name, i, len(self.stages))
                 if not stage.applies(ctx):
                     rec.mark(stage.name, "skipped")
                     continue
@@ -182,6 +192,7 @@ class Pipeline:
             if not cfg.run.continue_on_error:
                 raise
         finally:
+            self.progress.book_end(key, failed=rec.status == "failed")
             rec.seconds = time.time() - started
             state.update(rec)
             if not cfg.run.verbose:

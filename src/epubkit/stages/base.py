@@ -23,6 +23,13 @@ class Context:
     log: Any
     provider: Any = None
     meta: dict[str, Any] = field(default_factory=dict)
+    #: set by the pipeline so a long stage can say where it has got to
+    step: Any = None
+
+    def report(self, text: str) -> None:
+        """Tell the live display what this stage is doing, e.g. 'chapter 4/22'."""
+        if self.step:
+            self.step(text)
 
     def note(self, text: str) -> None:
         self.record.notes.append(text)

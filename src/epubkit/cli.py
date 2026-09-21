@@ -116,6 +116,8 @@ def build_parser() -> argparse.ArgumentParser:
                            help="run only these stages (%s)" % ", ".join(ALL_STAGES))
             s.add_argument("--skip", nargs="+", metavar="STAGE", choices=ALL_STAGES)
             s.add_argument("--no-recaps", action="store_true")
+            s.add_argument("--plain", action="store_true",
+                           help="no live progress display, just one line per book")
             s.add_argument("--no-resume", action="store_true",
                            help="reprocess books already recorded as done")
             s.add_argument("--allow-imperfect", action="store_true",
@@ -280,10 +282,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "recaps":
         return _cmd_recaps(args, cfg, log)
 
-    return _cmd_run(cfg, log)
+    return _cmd_run(cfg, log, plain=getattr(args, "plain", False))
 
 
-def _cmd_run(cfg: Config, log) -> int:
+def _cmd_run(cfg: Config, log, plain: bool = False) -> int:
     problems = cfg.check()
     if problems:
         print("cannot start:", file=sys.stderr)
@@ -297,7 +299,13 @@ def _cmd_run(cfg: Config, log) -> int:
         provider = build(cfg.ai)
 
     from .pipeline import Pipeline
-    state = Pipeline(cfg, log, provider).run()
+    from .progress import Progress
+    progress = Progress.for_stream(sys.stderr, plain=plain or cfg.run.dry_run)
+    undo = progress.attach(log)
+    try:
+        state = Pipeline(cfg, log, provider, progress).run()
+    finally:
+        undo()
 
     counts = state.counts()
     log.info("")
