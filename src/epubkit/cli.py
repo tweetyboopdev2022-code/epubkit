@@ -36,6 +36,8 @@ concurrency = 2                  # chapters summarised at once
 [metadata]
 sources = ["openlibrary", "googlebooks"]
 use_ai_fallback = true           # model only fills what catalogues could not
+suggest_shelves = true          # last step: Kids / Teens / Adult for every book, in REPORT.md
+shelf_lookup = true             # ...checked against Open Library / Google Books
 overwrite_existing = false       # never overwrite what the book already states
 # Full series name and full title, never abbreviated, however long it runs.
 filename_template   = "{series} {index:02d} - {title} - {authors}"
@@ -56,6 +58,7 @@ kepub   = true                   # wrap text in koboSpans: page numbers,
                                  # statistics and a position the Kobo keeps
 slim_above_mb = 25.0             # recompress books bigger than this; 0 = off
 detect_omnibus = true            # say when a file holds several books
+split_omnibus  = "auto"          # auto | report | off: split box sets first, then run every book
 make_missing_covers = true       # plain cover when there is no art at all
 panel   = "1072x1448"            # device screen, for fixed-layout output
 jpeg_quality = 88
@@ -63,7 +66,7 @@ jpeg_quality = 88
 [recaps]
 enabled = true
 min_chars = 2000                 # shorter than this is front matter
-lag_chapters = 1                 # never recap the chapter the reader is inside
+passage_words = 1500             # recap in passages this long, so it reaches your page
 cast = true
 
 [validate]
@@ -71,7 +74,7 @@ require_clean = true             # a book with errors is reported, not shipped
 accept_improvement = false       # ...unless it is better than what it replaced
 
 [run]
-stages = ["ingest", "convert", "metadata", "repair", "validate", "recaps", "report"]
+stages = ["ingest", "convert", "split", "metadata", "repair", "validate", "recaps", "report", "shelves"]
 workers = 3
 continue_on_error = true
 resume = true
@@ -125,8 +128,14 @@ def build_parser() -> argparse.ArgumentParser:
             s.add_argument("-n", "--dry-run", action="store_true")
             s.add_argument("-v", "--verbose", action="store_true")
 
-    r = sub.add_parser("recaps", help="generate recaps for a single book")
-    r.add_argument("book", type=Path)
+    r = sub.add_parser("recaps", help="add recaps to books or folders of books, in place")
+    r.add_argument("books", type=Path, nargs="+", metavar="BOOK_OR_FOLDER")
+    r.add_argument("--audit", action="store_true",
+                   help="only report what recap data each book carries; needs no model")
+    r.add_argument("--force", action="store_true",
+                   help="redo books whose recaps are already current")
+    r.add_argument("--limit", type=int, default=0,
+                   help="stop after this many books (0: no limit)")
     r.add_argument("-c", "--config", type=Path)
     r.add_argument("--provider", choices=("ollama", "anthropic", "openai"))
     r.add_argument("--model")
@@ -152,6 +161,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="install what is missing into epubkit's own environment")
     d.add_argument("-y", "--yes", action="store_true",
                    help="do not ask before installing")
+
+    sh = sub.add_parser("shelves", help="re-suggest Kids / Teens / Adult for finished books")
+    sh.add_argument("library", type=Path, nargs="?",
+                    help="the folder of finished books (default: the output folder)")
+    sh.add_argument("-c", "--config", type=Path)
+    sh.add_argument("--offline", action="store_true",
+                    help="do not look the books up online")
+    sh.add_argument("--provider", choices=("ollama", "anthropic", "openai"))
+    sh.add_argument("--model")
+    sh.add_argument("--endpoint")
 
     v = sub.add_parser("validate", help="EPUBCheck a folder or a single book")
     v.add_argument("target", type=Path)
@@ -186,6 +205,8 @@ def _overrides(args) -> dict:
         stages = [s for s in ALL_STAGES if s in args.only]
     if getattr(args, "skip", None):
         stages = [s for s in stages if s not in args.skip]
+    if "split" in (getattr(args, "skip", None) or ()):
+        o["convert.split_omnibus"] = "off"
     if getattr(args, "only", None) or getattr(args, "skip", None):
         o["run.stages"] = tuple(stages)
     return o
@@ -246,6 +267,18 @@ def main(argv: list[str] | None = None) -> int:
 
     log = _logger(cfg.run.verbose)
 
+    if args.command == "shelves":
+        from .ai import build
+        from .shelves import run as run_shelves
+        lib = (args.library or cfg.paths.output)
+        try:
+            provider = build(cfg.ai)
+        except Exception as exc:                            # noqa: BLE001
+            print("no model available (%s); using subjects only" % str(exc)[:80])
+            provider = None
+        return run_shelves(Path(lib).expanduser(), provider,
+                           lookup_online=cfg.metadata.shelf_lookup and not args.offline)
+
     if args.command == "config":
         return _cmd_config(args, cfg)
 
@@ -297,6 +330,12 @@ def _cmd_run(cfg: Config, log, plain: bool = False) -> int:
     if cfg._ai_needed():
         from .ai import build
         provider = build(cfg.ai)
+    elif cfg.metadata.suggest_shelves:
+        try:                                # the shelf step can use a model, needn't
+            from .ai import build
+            provider = build(cfg.ai)
+        except Exception:                                   # noqa: BLE001
+            provider = None
 
     from .pipeline import Pipeline
     from .progress import Progress
@@ -320,27 +359,149 @@ def _cmd_run(cfg: Config, log, plain: bool = False) -> int:
     return 1 if failed else 0
 
 
+def _recap_progress(name: str):
+    """Say where a single-book recap has got to, with an estimate.
+
+    A novel is dozens of model calls, each up to a minute on a local model,
+    and a command that prints nothing for half an hour looks hung.
+    """
+    import re
+    import time
+
+    start = time.monotonic()
+    tty = sys.stderr.isatty()
+    last = [""]
+
+    def step(text: str) -> None:
+        spent = time.monotonic() - start
+        line = "%s: %s, %d:%02d so far" % (name[:50], text, spent // 60, spent % 60)
+        m = re.match(r"passage (\d+)/(\d+)", text)
+        if m and int(m.group(1)) > 0:
+            done, total = int(m.group(1)), int(m.group(2))
+            left = spent / done * (total - done)
+            line += ", about %d min left" % max(1, round(left / 60))
+        if line == last[0]:
+            return
+        last[0] = line
+        if tty:
+            sys.stderr.write("\r\033[K" + line)
+        else:
+            sys.stderr.write(line + "\n")
+        sys.stderr.flush()
+
+    return step
+
+
+def _recap_books(paths) -> list[Path]:
+    out = []
+    for p in paths:
+        p = p.expanduser().resolve()
+        if p.is_dir():
+            out += sorted(q for q in p.rglob("*.epub")
+                          if not any(part.startswith(".") for part in q.relative_to(p).parts))
+        elif p.is_file():
+            out.append(p)
+        else:
+            print("no such book or folder: %s" % p, file=sys.stderr)
+    return out
+
+
 def _cmd_recaps(args, cfg: Config, log) -> int:
-    book = args.book.expanduser().resolve()
-    if not book.is_file():
-        print("no such book: %s" % book, file=sys.stderr)
+    """Add recaps to books where they already live, one at a time.
+
+    Only the recap files inside each book change - everything else is checked
+    byte-for-byte before a book is written, and the file is overwritten in
+    place, keeping its path. Books already carrying current recaps are
+    skipped, so an interrupted run over a whole library just picks up again.
+    """
+    import tempfile
+
+    from .stages import recaps as R
+
+    books = _recap_books(args.books)
+    if not books:
+        print("no books found", file=sys.stderr)
         return 2
+
+    if args.audit:
+        return _recap_audit(books, R)
+
     from .ai import build
     from .stages.base import Context
-    from .stages.recaps import RecapStage
     from .state import BookRecord
 
     provider = build(cfg.ai)
-    work = book.parent / ".epubkit-work"
-    work.mkdir(exist_ok=True)
-    rec = BookRecord(source=str(book))
-    ctx = Context(config=cfg, record=rec, path=book, work=work, log=log,
-                  provider=provider)
-    result = RecapStage().run(ctx)
-    for n in rec.notes:
-        log.info("%s", n)
-    shutil.rmtree(work, ignore_errors=True)
-    return 0 if result.ok else 1
+    todo = []
+    for b in books:
+        a = R.audit(b)
+        if a["kind"] == "passages" and a["format"] >= R.FORMAT and not args.force \
+                and not a.get("lead_off"):
+            continue
+        todo.append(b)
+    skipped = len(books) - len(todo)
+    if skipped:
+        print("%d of %d books already have current recaps; skipping them "
+              "(--force redoes them)" % (skipped, len(books)))
+    if args.limit:
+        todo = todo[:args.limit]
+
+    failed = 0
+    for i, book in enumerate(todo, 1):
+        work = Path(tempfile.mkdtemp(prefix="epubkit-recaps-"))
+        rec = BookRecord(source=str(book))
+        label = "[%d/%d] %s" % (i, len(todo), book.name) if len(todo) > 1 else book.name
+        ctx = Context(config=cfg, record=rec, path=book, work=work, log=log,
+                      provider=provider, step=_recap_progress(label))
+        try:
+            result = R.RecapStage().run(ctx)
+            ok = result.ok
+        except Exception as exc:                            # noqa: BLE001
+            ok = False
+            rec.notes.append("not written: %s" % exc)
+        if sys.stderr.isatty():
+            sys.stderr.write("\n")
+        for n in rec.notes:
+            log.info("  %s", n)
+        if not ok:
+            failed += 1
+        shutil.rmtree(work, ignore_errors=True)
+    return 1 if failed else 0
+
+
+def _recap_audit(books, R) -> int:
+    kinds = {}
+    rows = []
+    for b in books:
+        a = R.audit(b)
+        kind = a["kind"]
+        if kind == "passages" and a["format"] < R.FORMAT:
+            kind = "passages (old)"
+        elif kind == "passages" and a.get("lead_off"):
+            kind = "wrong lead"
+        kinds[kind] = kinds.get(kind, 0) + 1
+        rows.append((kind, a))
+    print("%-16s %6s %6s %7s %8s %9s  %s" % ("recaps", "parts", "people", "heard", "recap KB",
+                                            "book KB", "book"))
+    for kind, a in sorted(rows, key=lambda r: (r[0], r[1]["book"])):
+        print("%-16s %6s %6s %7s %8.1f %9.1f  %s%s" % (
+            kind, a["passages"] or "", a["people"] or "", a["heard_of"] or "",
+            a["recap_kb"], a["book_kb"], a["book"],
+            "  (not a kepub)" if not a["kepub"] else "") +
+            ("  ERROR %s" % a["error"] if a["error"] else ""))
+    print()
+    explain = {
+        "none": "no recaps",
+        "flat": "recaps from an older epubkit that the Kobo never read",
+        "chapters": "whole-chapter recaps, from gen_recaps.py",
+        "passages (old)": "passage recaps in an earlier layout",
+        "wrong lead": "written around the wrong main character; redone on the next run",
+        "passages": "current: up to the page, with who you have met and heard of",
+    }
+    for k, n in sorted(kinds.items(), key=lambda kv: -kv[1]):
+        print("%5d  %-16s %s" % (n, k, explain.get(k, "")))
+    total = sum(a["recap_kb"] for _k, a in rows)
+    print("\nrecap data in total: %.0f KB across %d books" % (total, len(rows)))
+    return 0
 
 
 def _cmd_config(args, cfg: Config) -> int:

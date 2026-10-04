@@ -30,6 +30,8 @@ def split_people(name):
 
 def canon(name):
     n = name.strip().rstrip(".,;:")
+    # "The Prime Minister" and "Prime Minister" are the one man
+    n = re.sub(r"^the\s+", "", n, flags=re.I)
     return re.sub(TITLES, "", n, flags=re.I).strip()
 
 
@@ -68,7 +70,8 @@ def is_person(name):
     return fold(name) not in GENERIC
 
 
-def collapse(rows):
+def _resolver(rows):
+    """-> (split rows, resolve(name) -> identity key, key -> (order, shown name))."""
     split = []
     for order, fname, name, desc in rows:
         for person in split_people(name):
@@ -97,6 +100,12 @@ def collapse(rows):
         shorts = [n for n in names
                   if len([t for t in canon(n).lower().split() if t]) == 1]
         for sh in shorts:
+            # Only a family title marks a different person: "Mrs. Finnigan"
+            # beside "Seamus Finnigan". A bare "Harry" beside "Harry Potter"
+            # is the model listing one boy twice, and splitting them gave
+            # Half-Blood Prince two Harrys.
+            if not re.match(FAMILY, sh.strip(), re.I):
+                continue
             tok = singular(canon(sh).lower().split()[0])
             for other in names:
                 if other == sh:
@@ -123,6 +132,31 @@ def collapse(rows):
         # when the reader only knows "Mrs. Figg".
         if k and (k not in display or order < display[k][0]):
             display[k] = (order, name)
+
+    return split, resolve, display
+
+
+def identities(rows):
+    """Every raw name in (order, filename, name, description) rows -> the one
+    name to show for that person: the earliest form the reader met.
+
+    For callers that keep their own rows and only need to know who is who.
+    Names that are not a person (a species, "the Weasleys") map to nothing.
+    """
+    _split, resolve, display = _resolver(rows)
+    out = {}
+    for _o, _f, name, _d in rows:
+        clean = name.strip().rstrip(".,;:")
+        if not is_person(clean):
+            continue
+        k = resolve(clean)
+        if k in display:
+            out[name] = display[k][1]
+    return out
+
+
+def collapse(rows):
+    split, resolve, display = _resolver(rows)
 
     per_chapter = {}
     for order, fname, name, desc in split:

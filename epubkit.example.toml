@@ -23,6 +23,8 @@ concurrency = 2                  # chapters summarised at once
 [metadata]
 sources = ["openlibrary", "googlebooks"]
 use_ai_fallback = true           # model only fills what catalogues could not
+suggest_shelves = true          # last step: Kids / Teens / Adult for every book, in REPORT.md
+shelf_lookup = true             # ...checked against Open Library / Google Books
 overwrite_existing = false       # never overwrite what the book already states
 # Full series name and full title, never abbreviated, however long it runs.
 filename_template   = "{series} {index:02d} - {title} - {authors}"
@@ -43,22 +45,25 @@ kepub   = true                   # wrap text in koboSpans: page numbers,
                                  # statistics and a position the Kobo keeps
 slim_above_mb = 25.0             # recompress books bigger than this; 0 = off
 detect_omnibus = true            # say when a file holds several books
+split_omnibus  = "auto"          # auto | report | off
 make_missing_covers = true       # plain cover when there is no art at all
 panel   = "1072x1448"            # device screen, for fixed-layout output
 jpeg_quality = 88
+comic_quality = 80     # picture books / comics; 0 = leave them alone.
+                       # 80 looks the same on a Clara Colour at ~60% of the size
 
 [recaps]
 enabled = true
 min_chars = 2000                 # shorter than this is front matter
-lag_chapters = 1                 # never recap the chapter the reader is inside
-cast = true
+passage_words = 1500             # recap in passages this long, so it reaches your page
+cast = true                      # everyone met or heard of, from where they are first named
 
 [validate]
 require_clean = true             # a book with errors is reported, not shipped
 accept_improvement = false       # ...unless it is better than what it replaced
 
 [run]
-stages = ["ingest", "convert", "metadata", "repair", "validate", "recaps", "report"]
+stages = ["ingest", "convert", "split", "metadata", "repair", "validate", "recaps", "report"]
 workers = 3
 continue_on_error = true
 resume = true

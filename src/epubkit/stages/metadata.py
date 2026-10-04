@@ -14,7 +14,7 @@ import json
 import re
 from pathlib import Path
 
-from ..library_hint import recommend
+from ..tools import series_hint
 from .base import Context, Stage, StageResult, run_tool
 
 #: Asking a model for facts invites invention, so the prompt is narrow and the
@@ -38,6 +38,35 @@ First pages:
 """
 
 
+def _override_for(book: Path, ctx) -> dict:
+    """Corrections the user made by hand, kept in epubkit-overrides.json.
+
+    Beside the source folder or in the library folder, a file of
+    {"text found in the original file name": {"title": ..., "series": ...,
+    "series_index": ..., "authors": [...], "subjects": [...]}}. It is applied
+    whatever a catalogue or model says, so a re-run cannot undo a fix that was
+    made by hand - and it is the only thing that survives a re-run."""
+    names = [book.name.lower(), Path(ctx.record.source).name.lower()]
+    dirs = {Path(ctx.record.source).parent, Path(ctx.record.source).parent.parent}
+    for d in dirs:
+        f = d / "epubkit-overrides.json"
+        if not f.is_file():
+            continue
+        try:
+            table = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        for key, fields in table.items():
+            if any(key.lower() in n for n in names) and isinstance(fields, dict):
+                out = {k: v for k, v in fields.items()
+                       if k in ("title", "authors", "series", "series_index",
+                                "subjects", "description") and v not in (None, "")}
+                if "authors" in out and isinstance(out["authors"], str):
+                    out["authors"] = [out["authors"]]
+                return out
+    return {}
+
+
 class MetadataStage(Stage):
     name = "metadata"
 
@@ -47,6 +76,12 @@ class MetadataStage(Stage):
 
         current = self._scan(ctx, book)
         ctx.meta["scanned"] = current
+
+        override = _override_for(book, ctx)
+        if override:
+            current.update(override)
+            ctx.note("metadata set by epubkit-overrides.json: %s"
+                     % ", ".join(sorted(override)))
 
         needs = _missing(current, ctx.config.metadata.overwrite_existing)
         if needs:
@@ -63,6 +98,29 @@ class MetadataStage(Stage):
                 if v and not current.get(k):
                     current[k] = v
                     ctx.note("%s from model" % k)
+
+        # Store titles carry the series and the blurb ("Her Dark Heart: A
+        # totally gripping crime thriller (Detective Gina Harte Book 5)").
+        # Take them apart, then place the book from its own "Books by" page.
+        current, tidied = series_hint.tidy(current)
+        for n in tidied:
+            ctx.note(n)
+        if not current.get("series") or current.get("series_index") is None:
+            cache = ctx.config.paths.work / "series-lists.json"
+            series, idx, how = series_hint.from_book(book, current, cache=cache)
+            if series:
+                current["series"], current["series_index"] = series, idx
+                ctx.note("series: %s #%s, from %s" % (series, idx, how))
+            elif not current.get("series"):
+                series, idx = series_hint.from_filename(Path(str(ctx.record.source)).name,
+                                                        current.get("title") or "")
+                if series:
+                    current["series"], current["series_index"] = series, idx
+                    ctx.note("series: %s #%s, from the file's name - check it"
+                             % (series, idx))
+
+        if override:
+            current.update(override)        # nothing later may undo a hand fix
 
         still = _missing(current, False)
         if still:
@@ -102,25 +160,7 @@ class MetadataStage(Stage):
         ctx.record.authors = ", ".join(current.get("authors") or []) or None
         ctx.record.series = current.get("series")
         ctx.record.series_index = current.get("series_index")
-        self._suggest_library(ctx, book, current)
         return StageResult(path=renamed)
-
-    def _suggest_library(self, ctx: Context, book: Path, current: dict) -> None:
-        """Kids, Teens or Adult, from what the book or a catalogue says."""
-        subjects = list(current.get("subjects") or [])
-        description = current.get("description")
-        if not subjects and ctx.config.metadata.sources:
-            # a book that stated everything else never reached the catalogue, so
-            # ask once now, for the subjects and the blurb only
-            found = self._catalogue(ctx, book, current, [])
-            subjects = _merged(subjects, found.get("subjects"))
-            description = description or found.get("description")
-        s = recommend(subjects, description, current.get("title"),
-                      current.get("series"))
-        ctx.record.shelf = s.label()
-        ctx.record.shelf_confidence = s.confidence
-        ctx.record.shelf_why = "; ".join(s.reasons)
-        ctx.note("suggested library: %s (%s)" % (s.label(), s.confidence))
 
     # ------------------------------------------------------------------
 

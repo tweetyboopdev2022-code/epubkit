@@ -58,10 +58,13 @@ class RepairStage(Stage):
             ctx.record.not_applicable("slim", "%.1f MB, under the %.0f MB "
                                       "threshold" % (mb, limit))
             return
-        r = run_tool("slim", [str(book.parent), "--apply",
-                              "--panel", ctx.config.convert.panel,
-                              "--quality", str(ctx.config.convert.jpeg_quality)],
-                     timeout=1800)
+        args = [str(book.parent), "--apply",
+                "--panel", ctx.config.convert.panel,
+                "--quality", str(ctx.config.convert.jpeg_quality)]
+        cq = getattr(ctx.config.convert, "comic_quality", 0) or 0
+        if cq:
+            args += ["--fixed-quality", str(cq)]
+        r = run_tool("slim", args, timeout=1800)
         after = book.stat().st_size / 1e6 if book.exists() else mb
         if r.returncode == 0 and after < mb - 0.5:
             ctx.note("slimmed %.1f MB to %.1f MB" % (mb, after))

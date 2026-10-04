@@ -1,150 +1,336 @@
-"""Per-chapter recaps and a spoiler-safe cast list, written into the book.
+"""Recaps and a spoiler-safe who's who, written into the book, down to the page.
 
-Two rules make this feature work rather than ruin books, and both were learned
-the hard way.
+Three rules make this feature work rather than ruin books, and all of them were
+learned the hard way.
 
-**Never recap the chapter the reader is inside.** The recap for the current
-chapter describes the whole of it, including the end they have not reached. An
-early version cheerfully told someone in the middle of Goblet of Fire chapter
-31 that the Triwizard Cup was a Portkey. Recaps are therefore keyed to the
-chapter *behind* the reader, which is what `lag_chapters` means.
+**Never recap anything ahead of the reader.** A chapter recap describes the
+whole chapter, including the end they have not reached. An early version told
+someone in the middle of Goblet of Fire chapter 31 that the Triwizard Cup was a
+Portkey. So a book is recapped in *passages* - runs of paragraphs a few pages
+long - and each passage is filed against the koboSpan paragraph it ENDS on. The
+device shows a passage only once the reader's bookmark is past that paragraph,
+which is as close to "up to this page" as a reflowable book allows.
 
-**A cast entry is withheld until the chapter that character appears in**, and
-describes only who they are at that point - never what they turn out to be.
+**Everyone the reader knows about, from the moment they know about them.** Not
+just who walks on stage: the dead father, the king in the story told at dinner,
+the aunt a letter mentions. Each person is filed against the exact paragraph
+that first names them, found by searching the text rather than trusted to the
+model, so nobody is introduced a page early. Whether the reader has *met* them
+or only *heard of* them is kept, and upgrades when they turn up in person.
 
-Everything is keyed to spine position, never to pages. A page depends on font
-size and margins; a chapter does not, and Nickel already numbers every spine
-document.
+**Describe people as they stand at that point, never as they turn out.** A
+first mention carries only how the text introduces them; what they are to the
+main character is filed at the end of the passage it was learned in, and moves
+on as the book does.
+
+Everything is keyed to spine document and koboSpan paragraph number, never to
+page numbers: a page depends on font size and margins, and the bookmark Nickel
+stores (``ChapterIDBookmarked``, ``OEBPS/ch.xhtml#kobo.N.M``) names the
+paragraph directly.
+
+Files written beside the OPF, in the manifest and never the spine:
+
+- ``recaps/parts.tsv``  order, path, end paragraph, chapter label, passage recap
+- ``recaps/people.tsv`` order, path, paragraph, name, met|heard, times seen, description
+- ``recaps/spine.tsv``  order, path of every spine document
+- ``recaps/meta.tsv``   format, passage_words, model, main_character
+- ``recaps/recaps.tsv`` order, path, chapter label, chapter recap   (older readers)
+- ``recaps/cast.tsv``   order, path, name, description              (older readers)
 """
 from __future__ import annotations
 
 import html
+import os
+import posixpath
 import re
+import shutil
+import tempfile
+import urllib.parse
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .base import Context, Stage, StageResult
 
+RECAP_DIR = "recaps"
+#: bumped whenever what is written changes shape; `audit` reports it
+FORMAT = 3
+# a document this short is a title page or a divider, whatever the TOC says
+FLOOR_CHARS = 300
+
 SYSTEM = (
-    "You write spoiler-safe recaps. You use only what the given chapter "
-    "states, you never draw on other knowledge of the book, and you never "
-    "say what a character turns out to be."
+    "You write spoiler-safe recaps and character lists for readers of a novel. "
+    "You use only what the given passage states, you never draw on other "
+    "knowledge of the book, and you never say what anyone turns out to be."
 )
 
-PROMPT = """Recap this chapter for a reader who has just finished it and read nothing beyond it.
+HERO_PROMPT = """Below are extracts from across a whole book. Who is its main character?
+
+The names that turn up in the most chapters are: {names}
+
+A book can open on someone else entirely - a prologue, a villain, a
+politician - so judge from all the extracts, not the first. Answer with one
+name exactly as written above, and nothing else. If the story is told by an
+"I" whose name is not in the list, answer: the narrator
+
+{text}
+"""
+
+PROMPT = """The reader has read this book up to the END of the passage below, and nothing after it.
+The main character of the whole book is {hero}, including in passages where
+{hero} does not appear. Nobody else is ever "the main character".
 
 Rules:
-- Use ONLY what this chapter states. If you happen to know this book, ignore that.
-- Never say what becomes of anyone: no deaths, betrayals, reveals, or fates.
-- Describe characters only as this chapter presents them.
-- CHARACTERS lists named individual people only. Not species, groups, houses,
-  organisations, places, objects or concepts.
-- Write in the same language as the chapter.
-- Plain text. No markdown, no asterisks.
+- Use ONLY what this passage states. If you happen to know this book, ignore that.
+- Never say what becomes of anyone: no deaths, betrayals, reveals or fates
+  beyond what the passage itself shows.
+- Write in the same language as the passage. Plain text, no markdown.
+- Never remark on who is absent ("Harry is not in this passage").
 
 Answer in exactly this shape:
-SUMMARY: <2-3 sentences, past tense>
-CHARACTERS:
-<name> - <who they are in the story, one line>
+SUMMARY: <2-4 sentences, past tense, what happened in this passage, ending
+with the situation at its final lines - who is there and what is about to
+happen - so a reader knows exactly where they left off.>
+PEOPLE:
+<Name> | <met or heard> | <how the passage first introduces them> | <their relationship to {hero} and their role>
 
-Chapter:
-{chapter}
+PEOPLE must list EVERY individual the passage names or refers to, not only
+those on the page. Include people who are only mentioned in passing, talked
+about, remembered, written to or about, or described in a story, rumour,
+legend or piece of history that someone tells - including the dead and the
+absent. Leave out groups, species, places, organisations and objects.
+- Name: as the text calls them. A title used as a name counts ("The Duke").
+- met: they are physically present or speak in this passage. heard: only
+  talked about, remembered, or named - including anyone dead or far away.
+- The third field is how they are first presented, before anything later in
+  the passage adds to it. 4 to 12 words.
+- The fourth field says who this person IS, not what they did in one scene.
+  State a connection to {hero} ONLY if this passage itself shows or says it.
+  Never infer family ties or relationships from anything outside the
+  passage; if the passage does not connect them to {hero}, begin with
+  "not yet connected to {hero}" and then give their role. Otherwise:
+  their relationship to {hero} (family, friend, enemy, teacher, stranger,
+  someone {hero} has only heard of...) and their role (a teacher, a
+  government minister, a servant...), as of the end of this passage.
+  4 to 14 words. Examples: "Harry's best friend, a fellow student";
+  "not yet connected to Wren; the town's magistrate".
+  For {hero} themself write: the main character. For anyone not yet
+  connected to {hero}, say so plainly ("not yet connected to {hero}").
+
+{before}Passage:
+{text}
 """
+
+BEFORE = """Just before this passage (context only - do not summarise it, and
+list nobody from it who is not also in the passage):
+{text}
+
+"""
+
+FRONT = ("praise for", "copyright", "all rights reserved", "table of contents",
+         "also by", "about the author", "dedication", "acknowledgment",
+         "acknowledgement", "a note on the type", "first published",
+         "reading group guide", "discussion questions")
+
+SCENE_BREAK = re.compile(r"^[\s*#~•·◆◇✦❖§—–-]{0,20}$")
+SPAN = re.compile(
+    r'<span\b[^>]*?\bid="kobo\.(\d+)\.\d+"[^>]*>(.*?)</span>', re.S)
+HERO_WORDS = ("the main character", "main character", "protagonist")
 
 
 class RecapStage(Stage):
     name = "recaps"
 
     def applies(self, ctx: Context) -> bool:
+        # a picture book has no prose to recap, and a comic that only looks
+        # like prose to the spine (Kindle panel view) is one of those
+        if ctx.meta.get("fixed_layout"):
+            return False
         return bool(ctx.config.recaps.enabled and ctx.provider)
 
     def run(self, ctx: Context) -> StageResult:
-        book = ctx.path
-        chapters = _chapters(book, ctx.config.recaps.min_chars)
-        if not chapters:
+        rc = ctx.config.recaps
+        docs = _documents(ctx.path, rc.min_chars)
+        if not docs:
             ctx.note("no chapters long enough to recap")
             return StageResult(message="no recaps")
 
-        lag = max(0, ctx.config.recaps.lag_chapters)
-        cfg = ctx.config.ai
-        results: dict[int, tuple[str, str, str]] = {}
+        target = max(2000, int(rc.passage_words) * 6)
+        passages = []                         # (order, path, label, paras)
+        for order, path, label, paras in docs:
+            for chunk in _segments(paras, target):
+                passages.append((order, path, label, chunk))
+        # the closing lines of the passage before, so "he" and "the letter"
+        # at the top of a passage mean something to the model
+        tails = [""] + [_tail(p[3]) for p in passages[:-1]]
+        lookup = {id(p): t for p, t in zip(passages, tails)}  # noqa: B905
+
+        ctx.report("finding the main character (%d passages to go)" % len(passages))
+        hero = _hero(ctx, docs)
+        ctx.note("main character: %s" % hero)
 
         def one(item):
-            idx, href, text = item
+            order, path, label, paras = item
+            text = "\n\n".join(t for _n, t in paras)
+            tail = lookup.get(id(item), "")
+            before = BEFORE.format(text=tail) if tail else ""
             try:
                 reply = ctx.provider.complete(
-                    PROMPT.format(chapter=text[:12000]), system=SYSTEM)
+                    PROMPT.format(hero=hero, text=text[:16000], before=before),
+                    system=SYSTEM)
             except Exception as exc:                        # noqa: BLE001
-                ctx.log.debug("    recap %d failed: %s", idx, exc)
+                ctx.log.debug("    recap %s:%d failed: %s", path, paras[0][0], exc)
                 return None
-            summary, cast = _parse(reply.text)
-            return (idx, href, summary, cast) if summary else None
+            summary, people = _parse(reply.text)
+            if not (summary or people):
+                unread.append(reply.text)
+                return None
+            return (item, summary, people)
 
-        workers = max(1, min(cfg.concurrency, len(chapters)))
-        ctx.report("chapter 0/%d" % len(chapters))
+        unread: list[str] = []
+        workers = max(1, min(ctx.config.ai.concurrency, len(passages)))
+        got = []
+        ctx.report("passage 0/%d" % len(passages))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            for done, got in enumerate(pool.map(one, chapters), 1):
-                ctx.report("chapter %d/%d" % (done, len(chapters)))
-                if got:
-                    idx, href, summary, cast = got
-                    results[idx] = (href, summary, cast)
-
-        if not results:
+            for done, res in enumerate(pool.map(one, passages), 1):
+                ctx.report("passage %d/%d" % (done, len(passages)))
+                if res:
+                    got.append(res)
+        if unread:
+            ctx.note("%d of %d replies were not in the expected shape; the first began: %r"
+                     % (len(unread), len(passages), unread[0][:300]))
+        if not any(s for _i, s, _p in got):
             ctx.note("recap generation produced nothing")
-            return StageResult(message="no recaps")
+            return StageResult(ok=not unread, message="no recaps")
 
-        # shift by the lag so a recap only ever describes what is behind
-        rows = []
-        for idx in sorted(results):
-            href, summary, _ = results[idx]
-            shown_at = idx + lag
-            rows.append((shown_at, href, summary))
+        parts = [(it[0], it[1], it[3][-1][0], it[2], s)
+                 for it, s, _p in got if s]
+        people = _people_rows(got, hero, ctx) if rc.cast else []
+        legacy = bool(getattr(rc, "legacy_files", False))
+        chapters = _chapter_rows(parts)
+        cast = _legacy_cast(people) if legacy else []
+        meta = [("format", str(FORMAT)), ("passage_words", str(rc.passage_words)),
+                ("model", str(getattr(ctx.provider, "model", "") or "")),
+                ("main_character", hero)]
+        _embed(ctx.path, parts, people, chapters if legacy else [], cast,
+               _spine(ctx.path), meta)
 
-        cast_rows = _cast_rows(results) if ctx.config.recaps.cast else []
-        if cast_rows:
-            cast_rows = _collapse(ctx, cast_rows)
-        _embed(book, rows, cast_rows)
-        ctx.record.recaps = len(rows)
-        ctx.note("%d recaps, %d cast entries" % (len(rows), len(cast_rows)))
-        return StageResult(message="%d recaps" % len(rows))
+        n_people = len({r[3] for r in people})
+        heard = len({r[3] for r in people} - {r[3] for r in people if r[4] == "met"})
+        ctx.record.recaps = len(chapters)
+        ctx.note("%d passages over %d chapters; %d people (%d only heard of)"
+                 % (len(parts), len(chapters), n_people, heard))
+        return StageResult(message="%d recaps, %d people" % (len(chapters), n_people))
 
 
-# ---------------------------------------------------------------- helpers
+# ------------------------------------------------------------ the book
 
 
-def _chapters(book: Path, min_chars: int) -> list[tuple[int, str, str]]:
-    """Spine documents with enough prose to be a chapter, as (index, href, text).
+def _documents(book: Path, min_chars: int):
+    """Spine documents worth reading, as (order, zip path, label, paragraphs).
 
-    The spine is what Nickel itself reads, so the index matches what the device
-    stores in ChapterIDBookmarked. A filename glob would not.
+    `order` is the spine position, and the path is the full path inside the
+    zip - the same string Nickel stores in ChapterIDBookmarked, which is what
+    the device matches on. Short documents are kept when the table of contents
+    names them, so a two-page prologue or a letter between chapters still
+    contributes its people; front and back matter are dropped by content.
     """
-    out: list[tuple[int, str, str]] = []
+    out = []
     try:
         with zipfile.ZipFile(book) as z:
-            opf_name = next((n for n in z.namelist() if n.endswith(".opf")), None)
+            opf_name = _opf_name(z)
             if not opf_name:
                 return []
             opf = z.read(opf_name).decode("utf-8", "ignore")
-            base = opf_name.rsplit("/", 1)[0] if "/" in opf_name else ""
+            base = posixpath.dirname(opf_name)
             manifest = _manifest(opf)
-            hrefs = []
-            for idref in re.findall(r'<itemref\b[^>]*idref="([^"]+)"', opf):
+            spine = []
+            for idref in re.findall(r'<itemref\b[^>]*\bidref="([^"]+)"', opf):
                 href = manifest.get(idref)
                 if href:
-                    hrefs.append(href)
-            for i, href in enumerate(hrefs):
-                full = (base + "/" + href) if base else href
+                    spine.append(_join(base, href))
+            titles = _toc_titles(z, opf, base, manifest)
+            for order, full in enumerate(spine):
                 try:
-                    raw = z.read(full).decode("utf-8", "ignore")
+                    raw = z.read(full)
                 except KeyError:
                     continue
-                text = _plain(raw)
-                if len(text) >= min_chars:
-                    out.append((i, href, text))
+                paras = _paragraphs(raw)
+                size = sum(len(t) for _n, t in paras)
+                if size < FLOOR_CHARS:
+                    continue
+                label = titles.get(full) or ""
+                if _is_navigation(raw, paras, label):
+                    # A contents page is a list of chapter titles. Given one,
+                    # the model "summarised" Half-Blood Prince from what it
+                    # knew of the book - Horcruxes, the cave - and filed it
+                    # before chapter 1. Nothing here is story.
+                    continue
+                head = " ".join(t for _n, t in paras)[:1200].lower()
+                if any(m in head for m in FRONT) and size < min_chars * 4:
+                    continue
+                if size < min_chars and not label:
+                    continue
+                if not label:
+                    m = re.match(r"(?:unnamed\s+)?(chapter\s+\w+)", head, re.I)
+                    label = m.group(1).title() if m else "Section %d" % order
+                out.append((order, full, label, paras))
     except (zipfile.BadZipFile, OSError):
         return []
     return out
+
+
+def _spine(book: Path) -> list[tuple[int, str]]:
+    """Every spine document as (order, zip path), recapped or not.
+
+    The device needs this to place a bookmark that sits in a document with no
+    recap of its own - a title page, an interlude too short to summarise - and
+    a shell script has no business parsing an OPF.
+    """
+    try:
+        with zipfile.ZipFile(book) as z:
+            opf_name = _opf_name(z)
+            if not opf_name:
+                return []
+            opf = z.read(opf_name).decode("utf-8", "ignore")
+    except (zipfile.BadZipFile, OSError, KeyError):
+        return []
+    base = posixpath.dirname(opf_name)
+    manifest = _manifest(opf)
+    ids = re.findall(r'<itemref\b[^>]*\bidref="([^"]+)"', opf)
+    return [(i, _join(base, manifest[r])) for i, r in enumerate(ids) if r in manifest]
+
+
+_NAV_LABEL = re.compile(r"^\s*(table of )?contents?\s*$|^\s*(index|toc)\s*$", re.I)
+
+
+def _is_navigation(raw: bytes, paras, label: str) -> bool:
+    """A contents page, index or other list of links rather than prose."""
+    if _NAV_LABEL.match(label or ""):
+        return True
+    text = raw.decode("utf-8", "ignore")
+    if re.search(r'<nav\b[^>]*epub:type="toc"', text):
+        return True
+    links = len(re.findall(r"<a\b[^>]*\bhref=", text))
+    if len(paras) >= 5 and links >= 0.6 * len(paras):
+        return True
+    return False
+
+
+def _opf_name(z: zipfile.ZipFile) -> str | None:
+    try:
+        c = z.read("META-INF/container.xml").decode("utf-8", "ignore")
+        m = re.search(r'full-path="([^"]+)"', c)
+        if m and m.group(1) in z.namelist():
+            return m.group(1)
+    except KeyError:
+        pass
+    return next((n for n in z.namelist() if n.endswith(".opf")), None)
+
+
+def _join(base: str, href: str) -> str:
+    href = urllib.parse.unquote(href.split("#")[0])
+    return posixpath.normpath(posixpath.join(base, href)) if base else href
 
 
 def _manifest(opf: str) -> dict[str, str]:
@@ -162,114 +348,708 @@ def _manifest(opf: str) -> dict[str, str]:
     return out
 
 
+def _toc_titles(z, opf, base, manifest) -> dict[str, str]:
+    """Spine path -> first TOC label pointing into it (NCX or EPUB 3 nav)."""
+    cands = [h for h in manifest.values()
+             if h.endswith(".ncx") or re.search(r"nav\.x?html?$", h, re.I)]
+    for href in cands:
+        full = _join(base, href)
+        try:
+            raw = z.read(full).decode("utf-8", "ignore")
+        except KeyError:
+            continue
+        here = posixpath.dirname(full)
+        found: dict[str, str] = {}
+        if href.endswith(".ncx"):
+            for label, src in re.findall(
+                    r"<navLabel>\s*<text>(.*?)</text>\s*</navLabel>\s*"
+                    r'<content\b[^>]*\bsrc="([^"]+)"', raw, re.S):
+                found.setdefault(_join(here, src), _plain(label)[:60])
+        else:
+            for src, label in re.findall(r'<a\b[^>]*\bhref="([^"]+)"[^>]*>(.*?)</a>',
+                                         raw, re.S):
+                found.setdefault(_join(here, src), _plain(label)[:60])
+        if found:
+            return found
+    return {}
+
+
+def _paragraphs(raw: bytes) -> list[tuple[int, str]]:
+    """(koboSpan paragraph number, text) for one content document.
+
+    A kepub already carries the numbers. A plain EPUB is numbered in memory by
+    the same transform `kepubify` applies, so the numbers match the kepub this
+    book will become.
+    """
+    text = raw.decode("utf-8", "ignore")
+    if 'id="kobo.' not in text:
+        try:
+            from ..tools import kepubify
+            done = kepubify.convert_doc(raw)
+        except Exception:                                   # noqa: BLE001
+            done = None
+        if done:
+            text = done.decode("utf-8", "ignore")
+    body = text.split("<body", 1)[-1]
+    paras: dict[int, list[str]] = {}
+    order: list[int] = []
+    for n, inner in SPAN.findall(body):
+        n = int(n)
+        if n not in paras:
+            paras[n] = []
+            order.append(n)
+        paras[n].append(inner)
+    out = []
+    for n in order:
+        t = _plain("".join(paras[n]))
+        if t:
+            out.append((n, t))
+    if not out:                   # no spans at all: one paragraph, number 0
+        t = _plain(body)
+        if t:
+            out.append((0, t))
+    return out
+
+
 def _plain(raw: str) -> str:
     raw = re.sub(r"(?is)<(script|style)\b.*?</\1>", " ", raw)
     raw = re.sub(r"<[^>]+>", " ", raw)
     return re.sub(r"\s+", " ", html.unescape(raw)).strip()
 
 
-def _parse(text: str) -> tuple[str, str]:
+def _segments(paras, target: int):
+    """Cut a chapter into passages of about `target` characters.
+
+    A scene break past the halfway mark ends a passage early, so passages
+    follow the book's own seams where it has them; a chapter shorter than the
+    target stays whole.
+    """
+    out, cur, size = [], [], 0
+    for n, t in paras:
+        if cur and SCENE_BREAK.match(t) and size >= target // 2:
+            out.append(cur)
+            cur, size = [], 0
+        cur.append((n, t))
+        size += len(t)
+        if size >= target:
+            out.append(cur)
+            cur, size = [], 0
+    if cur:
+        # a stub of a few lines is folded into the passage before it
+        if out and size < target // 4:
+            out[-1].extend(cur)
+        else:
+            out.append(cur)
+    return out
+
+
+def _tail(paras, chars: int = 900) -> str:
+    """The last few paragraphs of a passage, about `chars` long."""
+    out, size = [], 0
+    for _n, t in reversed(paras):
+        out.append(t)
+        size += len(t)
+        if size >= chars:
+            break
+    text = "\n\n".join(reversed(out))
+    return text[-chars * 2:]
+
+
+# ------------------------------------------------------------ the model
+
+
+def _hero(ctx: Context, docs) -> str:
+    """The main character, judged from the whole book rather than its opening.
+
+    Asking about the opening alone named "The Prime Minister" as the lead of
+    Harry Potter and the Half-Blood Prince, whose first chapter is his, and
+    every relationship in the book was then described relative to him. So
+    the names that recur across the most chapters are counted first, and the
+    model chooses among them from extracts spread through the book. An answer
+    outside that list falls back to the most widespread name.
+    """
+    fixed = (getattr(ctx.config.recaps, "main_character", "") or "").strip()
+    if fixed:
+        return fixed
+    candidates = _recurring_names(docs)
+    if not candidates:
+        return "the narrator"
+    # A series named after its lead ("Detective Gina Harte") settles it. A
+    # crime novel's victims often get the opening chapters, and the model
+    # then picked Annabel, Holly or "the narrator" for Gina Harte books.
+    lead = _series_lead(ctx, candidates)
+    if lead:
+        return lead
+    picks = [docs[int(i * (len(docs) - 1) / 4)] for i in range(5)] if len(docs) > 4 else docs
+    extracts = "\n\n".join(
+        "From %s:\n%s" % (label, " ".join(t for _n, t in paras)[:1600])
+        for _o, _p, label, paras in picks)
+    try:
+        reply = ctx.provider.complete(
+            HERO_PROMPT.format(names=", ".join(candidates), text=extracts), system=SYSTEM)
+        name = reply.text.strip().splitlines()[0].strip(" .\"'*")
+    except Exception:                                       # noqa: BLE001
+        name = ""
+    if name.lower() == "the narrator":
+        return "the narrator"
+    for c in candidates:
+        if name.lower() == c.lower() or (name and name.lower() in c.lower().split()):
+            return c
+    return candidates[0]
+
+
+def _series_lead(ctx: Context, candidates) -> str:
+    series = getattr(ctx.record, "series", None) or \
+        (ctx.meta.get("scanned") or {}).get("series") or ""
+    if not series:                  # `epubkit recaps` on a finished book
+        try:
+            with zipfile.ZipFile(ctx.path) as z:
+                opf = next(z.read(n).decode("utf-8", "ignore")
+                           for n in z.namelist() if n.endswith(".opf"))
+            m = re.search(r'name="calibre:series" content="([^"]*)"', opf) or \
+                re.search(r'property="belongs-to-collection"[^>]*>([^<]*)<', opf)
+            series = html.unescape(m.group(1)) if m else ""
+        except (OSError, zipfile.BadZipFile, StopIteration):
+            series = ""
+    words = {w.lower() for w in re.findall(r"[A-Za-z][\w'’]{2,}", series)}
+    if not words:
+        return ""
+    for c in candidates:
+        parts = [p.lower() for p in c.split()]
+        if parts and parts[0] in words:
+            return c
+    return ""
+
+
+_NOT_NAMES = {
+    "the", "a", "an", "he", "she", "it", "i", "in", "on", "at", "but", "and", "when",
+    "then", "they", "we", "you", "his", "her", "what", "where", "why", "how",
+    "chapter", "there", "this", "that", "mr", "mrs", "ms", "miss", "dr", "not",
+    "no", "yes", "oh", "well", "sir", "lady", "lord", "professor", "uncle", "aunt",
+    "god", "english", "french", "monday", "tuesday", "wednesday", "thursday",
+    "friday", "saturday", "sunday", "january", "february", "march", "april", "may",
+    "june", "july", "august", "september", "october", "november", "december",
+    "christmas", "ministry", "minister", "prime", "king", "queen", "prince", "dark",
+}
+
+
+def _recurring_names(docs, keep: int = 8) -> list[str]:
+    """Capitalised words mid-sentence, ranked by how many chapters use them.
+
+    A walk-on can dominate a chapter; only the lead turns up in nearly all of
+    them. Counting words that are capitalised away from the start of a
+    sentence keeps "The" and "When" out without a dictionary.
+    """
+    from collections import Counter
+
+    spread, total = Counter(), Counter()
+    pat = re.compile(r"(?<=[a-z,;:\u2019'] )([A-Z][a-z\u2019'-]{2,})")
+    for _o, _p, _l, paras in docs:
+        seen = set()
+        for _n, t in paras:
+            for w in pat.findall(t):
+                w = re.sub(r"[\u2019']s$", "", w)
+                if w.lower() in _NOT_NAMES or "'" in w or "\u2019" in w:
+                    continue                  # I'm, I'd, I've are not people
+                total[w] += 1
+                seen.add(w)
+        spread.update(seen)
+    ranked = sorted(spread, key=lambda w: (-spread[w], -total[w]))
+    return ranked[:keep]
+
+
+def _parse(text: str) -> tuple[str, list[tuple[str, str, str, str]]]:
+    """-> (summary, [(name, met|heard, introduced as, relation)])."""
     if not text:
-        return "", ""
-    summary, cast = "", []
-    m = re.search(r"SUMMARY:\s*(.+?)(?:\nCHARACTERS:|\Z)", text, re.S | re.I)
+        return "", []
+    text = re.sub(r"\*+", "", text)
+    summary = ""
+    m = re.search(r"SUMMARY\s*:\s*(.+?)(?:\n\s*(?:PEOPLE|CHARACTERS)\s*:|\Z)",
+                  text, re.S | re.I)
     if m:
         summary = re.sub(r"\s+", " ", m.group(1)).strip()
-    m = re.search(r"CHARACTERS:\s*(.+)\Z", text, re.S | re.I)
+    people = []
+    m = re.search(r"(?:PEOPLE|CHARACTERS)\s*:\s*(.+)\Z", text, re.S | re.I)
     if m:
         for line in m.group(1).splitlines():
-            line = line.strip(" -*\t")
-            if line and " - " in line:
-                cast.append(line)
-    return summary, "\n".join(cast)
+            line = line.strip().lstrip("-•0123456789. ").strip()
+            bits = [b.strip() for b in line.split("|")]
+            if len(bits) < 4 or not bits[0]:
+                continue
+            name, status, intro, rel = bits[0], bits[1].lower(), bits[2], bits[3]
+            name = re.sub(r"\s*\(.*?\)\s*", " ", name).strip(" .,:;\"'")
+            if not (1 < len(name) < 45) or not name[0].isupper():
+                continue
+            status = "met" if status.startswith("met") else "heard"
+            people.append((name, status, _tidy(intro), _tidy(rel)))
+    return summary, people
 
 
-def _collapse(ctx: Context, rows: list) -> list:
-    """One person, one entry.
+def _tidy(s: str, words: int = 16) -> str:
+    """One short line: a model asked for 12 words sometimes writes 40."""
+    s = re.sub(r"\s+", " ", s).strip(" .;")
+    w = s.split(" ")
+    if len(w) <= words:
+        return s
+    cut = " ".join(w[:words])
+    # end on the last clause boundary if there is a sensible one
+    p = max(cut.rfind(", "), cut.rfind("; "))
+    return (cut[:p] if p > len(cut) // 2 else cut).rstrip(" ,;")
 
-    A model calls the same character Harry, Harry Potter and Potter across
-    three chapters, and an uncollapsed cast list reads like a crowd scene.
+
+_GROUPS = {"family", "families", "staff", "office", "ministry", "department",
+           "misinformation", "headquarters", "bank", "hospital", "newspaper",
+           "council", "society", "team", "people", "crowd", "government",
+           "builders", "eaters", "obliviators", "aurors", "dementors", "muggles",
+           "students", "teachers", "guards", "twins", "parents", "children",
+           "brothers", "sisters", "villagers", "soldiers", "police", "army",
+           "committee", "board", "house", "school", "class", "gang", "club"}
+_SMALL = {"the", "of", "de", "la", "le", "van", "von", "der", "da", "du", "del", "al", "bin"}
+
+
+def _individual(name: str) -> bool:
+    """A person's name or a title used as one - not a group or a description.
+
+    "The builders", "The Hogwarts staff", "The Gaunt family" and "The ugly
+    little man" were all listed as people. A name is capitalised word by word
+    (bar small particles), does not end in a group noun, and is not a word
+    broken off mid-speech ("Lord Vol-").
+    """
+    words = name.split()
+    if not words or name.endswith(("-", "\u2014", "\u2013")):
+        return False
+    if any(w.lower().strip(".,") in _GROUPS for w in words):
+        return False              # "The Ministry of Magic", "Office of Misinformation"
+    for w in words:
+        if w.lower() in _SMALL:
+            continue
+        if not w[:1].isupper():
+            return False
+    return True
+
+
+def _is_hero(name: str, hero: str) -> bool:
+    if not hero or hero == "the narrator":
+        return False
+    a = {w.lower() for w in name.split() if w.lower() not in _SMALL}
+    b = {w.lower() for w in hero.split() if w.lower() not in _SMALL}
+    return bool(a & b) and (name.lower() == hero.lower() or len(b) == 1 or a == b
+                            or a <= b or b <= a)
+
+
+def _not_the_lead(rel: str, intro: str) -> str:
+    """Only the lead is the main character; strip the claim from anyone else."""
+    if "main character" not in rel.lower():
+        return rel
+    cleaned = re.sub(r"(?i)\b(the )?main character('s)?( of the (story|book))?[, ]*", "", rel)
+    cleaned = cleaned.strip(" ,;")
+    return cleaned if len(cleaned.split()) >= 3 else intro
+
+
+# ------------------------------------------------------------ the cast
+
+
+def _first_mention(name: str, paras) -> int | None:
+    """Paragraph number of the first paragraph that names this person.
+
+    Tries the whole name (without a leading "The"), then its last and first
+    words. The model is not trusted with positions, or with names: None means
+    the passage never names this person, and the caller leaves them out.
+    """
+    bare = re.sub(r"^(?i:the)\s+", "", name)
+    words = [w for w in re.findall(r"[\w'’.-]+", bare) if w[:1].isupper()]
+    tries = [bare] + ([words[-1], words[0]] if len(words) > 1 else [])
+    tries = [t for t in tries if len(t) >= 3 and t.lower() not in _NOT_A_NAME]
+    for probe in tries:
+        pat = re.compile(r"(?<![\w])%s(?![\w])" % re.escape(probe))
+        for n, t in paras:
+            if pat.search(t):
+                return n
+    return None
+
+
+def _cut_off(name: str, paras) -> bool:
+    """A name the text only ever breaks off mid-word: "Lord Vol-"."""
+    last = name.split()[-1].rstrip(".")
+    text = " ".join(t for _n, t in paras)
+    hits = re.findall(r"(?<![\w])%s(?![\w])(.?)" % re.escape(last), text)
+    return bool(hits) and all(h in "-\u2014\u2013" and h for h in hits)
+
+
+def _unclaim(rel: str, hero: str) -> str:
+    """Remove a tie to the lead that a passage without the lead cannot show.
+
+    Gemma called Bellatrix "Harry's acquaintance" and Fudge "Harry's friend"
+    in chapters Harry is not in.
+    """
+    words = [w for w in hero.split() if w[:1].isupper()]
+    if not words or not re.search(r"\b(%s)\b" % "|".join(map(re.escape, words)), rel):
+        return rel
+    if rel.lower().startswith("not yet connected"):
+        return rel
+    rest = re.split(r"[;,]\s*", rel, maxsplit=1)
+    role = rest[1] if len(rest) > 1 and not re.search(
+        r"\b(%s)\b" % "|".join(map(re.escape, words)), rest[1]) else ""
+    return "not yet connected to %s" % hero + ("; " + role if role else "")
+
+
+def _all_words_present(name: str, paras) -> bool:
+    """Every capitalised word of the name occurs somewhere in the passage.
+
+    The surname alone matched "Serious Black", a slip of the model's for
+    Sirius; an invented first name slips through the same way.
+    """
+    text = " ".join(t for _n, t in paras)
+    for w in re.findall(r"[\w'’.-]+", re.sub(r"^(?i:the)\s+", "", name)):
+        if w[:1].isupper() and w.lower() not in _NOT_A_NAME and len(w) > 1:
+            if not re.search(r"(?<![\w])%s(?![\w])" % re.escape(w.rstrip(".")), text):
+                return False
+    return True
+
+
+_NOT_A_NAME = {"the", "mr", "mr.", "mrs", "mrs.", "miss", "ms", "ms.", "dr", "dr.",
+               "sir", "lady", "lord", "king", "queen", "prince", "princess",
+               "uncle", "aunt", "professor", "captain", "old", "young", "saint"}
+
+
+def _people_rows(got, hero, ctx):
+    """-> [(order, path, para, name, met|heard, description)], sorted by position.
+
+    Two rows per person per passage at most:
+    - where they are first named, how they were introduced (their first ever
+      passage only), and
+    - at the passage's last paragraph, who they are to the main character by
+      then. A later passage's row supersedes it only once the reader is past
+      that passage too.
+    """
+    raw = []   # (pos, (path, para, status, kind, text), name)
+    from ..tools.dedupe_cast import split_people
+    for (order, path, _label, paras), _s, listed in got:
+        end = paras[-1][0]
+        # a passage that never names the lead cannot show anyone's tie to them
+        hero_here = hero == "the narrator" or any(
+            _all_words_present(w, paras) for w in hero.split() if w[:1].isupper())
+        people = [(one, st, i, r) for name, st, i, r in listed
+                  for one in split_people(name)]
+        for name, status, intro, rel in people:
+            if not _individual(name):
+                continue
+            at = _first_mention(name, paras) if _all_words_present(name, paras) else None
+            if at is None:
+                # The passage never names them. That is the model filling in
+                # from what it knows of the book - Grindelwald turned up in
+                # Half-Blood Prince this way - so they are left out.
+                continue
+            if _cut_off(name, paras):
+                continue
+            if _is_hero(name, hero):
+                rel = "the main character"
+            else:
+                rel = _not_the_lead(rel, intro)
+                if not hero_here:
+                    rel = _unclaim(rel, hero)
+            raw.append((_pos(order, at), (order, path, at, status, "intro", intro), name))
+            raw.append((_pos(order, end), (order, path, end, status, "rel", rel), name))
+
+    names = _identities([(pos, name) for pos, _d, name in raw], ctx)
+
+    rows, seen, met, said = [], set(), set(), {}
+    for _p, (order, path, para, status, kind, text), name in sorted(raw, key=lambda r: r[0]):
+        who = names.get(name)
+        if not who or not text:
+            continue
+        if kind == "intro" and who in seen:
+            # introduced long ago; but if this is where the reader first meets
+            # someone they had only heard of, say so from this paragraph on,
+            # keeping what was already known about them
+            if status == "met" and who not in met and who in said:
+                rows.append((order, path, para, who, "met", said[who]))
+                met.add(who)
+            continue
+        seen.add(who)
+        said[who] = text
+        if status == "met":
+            met.add(who)
+        rows.append((order, path, para, who, status, text))
+
+    # heard -> met is one way: once met, a later passage that only mentions
+    # them does not demote them
+    met_at: dict[str, int] = {}
+    for order, _p, para, who, status, _t in rows:
+        if status == "met":
+            met_at.setdefault(who, _pos(order, para))
+    fixed = []
+    for order, path, para, who, status, text in rows:
+        if who in met_at and _pos(order, para) >= met_at[who]:
+            status = "met"
+        fixed.append((order, path, para, who, status, text))
+    # one row per person per position: the last word wins
+    dedup = {}
+    for r in fixed:
+        dedup[(r[0], r[2], r[3])] = r
+    return _thin(sorted(dedup.values(), key=lambda r: (_pos(r[0], r[2]), r[3])))
+
+
+def _thin(rows):
+    """Drop rows that would not change what the reader sees, and count.
+
+    Most of the who's who is the same person described the same way passage
+    after passage; keeping a row only when the status flips or the wording
+    really changes cuts people.tsv to a fraction. The running count of
+    passages each person has turned up in rides along on the rows that are
+    kept, so the device can still rank the leads first.
+    -> [(order, path, para, name, met|heard, seen so far, description)]
+    """
+    import difflib
+
+    out, count, last = [], {}, {}
+    for order, path, para, who, status, text in rows:
+        count[who] = count.get(who, 0) + 1
+        prev = last.get(who)
+        if prev and prev[0] == status and (
+                prev[1] == text or
+                difflib.SequenceMatcher(None, prev[1].lower(), text.lower()).ratio() >= 0.75):
+            continue
+        last[who] = (status, text)
+        out.append((order, path, para, who, status, count[who], text))
+    return out
+
+
+def _pos(order: int, para: int) -> int:
+    return order * 1_000_000 + para
+
+
+def _identities(named, ctx) -> dict[str, str]:
+    """Raw name -> the one display name for that person.
+
+    "Harry", "Harry Potter" and "Potter" are one person; "Mrs. Finnigan" and
+    "Seamus Finnigan" are two. The shown name is the earliest form the reader
+    met, so a full name learned later is not imported backwards.
     """
     try:
         from ..tools import dedupe_cast
-    except ImportError:                                     # pragma: no cover
-        return rows
-    try:
-        # dedupe_cast works on (order, file, name, description) rows
-        shaped = [(i, "", name, desc) for i, name, desc in rows]
-        out = dedupe_cast.collapse(shaped)
+        return dedupe_cast.identities([(pos, "", name, "") for pos, name in named])
     except Exception as exc:                                # noqa: BLE001
         ctx.log.debug("    cast dedupe failed: %s", exc)
-        ctx.record.ran("dedupe_cast", "failed, keeping the raw list")
-        return rows
-    collapsed = [(i, name, desc) for i, _f, name, desc in out]
-    if len(collapsed) < len(rows):
-        ctx.note("cast: %d entries collapsed to %d people"
-                 % (len(rows), len(collapsed)))
-    ctx.record.ran("dedupe_cast", "%d -> %d" % (len(rows), len(collapsed)))
-    return collapsed
+        return {n: n for _p, n in named}
 
 
-def _cast_rows(results: dict) -> list[tuple[int, str, str]]:
-    """First appearance wins, so nobody is introduced before the reader meets them."""
-    seen: dict[str, tuple[int, str]] = {}
-    for idx in sorted(results):
-        _, _, cast = results[idx]
-        for line in (cast or "").splitlines():
-            if " - " not in line:
-                continue
-            name, _, desc = line.partition(" - ")
-            key = name.strip().lower()
-            if key and key not in seen:
-                seen[key] = (idx, "%s\t%s" % (name.strip(), desc.strip()))
-    return [(idx, *row.split("\t", 1)) for idx, row in
-            sorted(seen.values(), key=lambda r: r[0])]
+# ------------------------------------------------------------ outputs
 
 
-def _embed(book: Path, rows, cast_rows) -> None:
-    """Write the TSVs into the book, declared in the manifest, never the spine.
+def _chapter_rows(parts):
+    """Chapter-level rows for readers that predate passages."""
+    by = {}
+    for order, path, _end, label, summary in parts:
+        by.setdefault((order, path, label), []).append(summary)
+    return [(o, p, lab, " ".join(s)) for (o, p, lab), s in sorted(by.items())]
+
+
+def _legacy_cast(people):
+    last = {}
+    for order, path, _para, who, _st, _n, text in people:
+        last[(order, who)] = (order, path, who, text)
+    return sorted(last.values(), key=lambda r: (r[0], r[2]))
+
+
+def _clean(s: str) -> str:
+    return re.sub(r"[\t\r\n]+", " ", str(s)).strip()
+
+
+def _embed(book: Path, parts, people, chapters, cast, spine=(), meta=()) -> None:
+    """Write the TSVs into the book, in the manifest and never the spine.
 
     Declared so EPUBCheck does not call them undeclared resources; out of the
-    spine so the reader never turns a page into them.
+    spine so the reader never turns a page into them. Files an earlier version
+    of this stage wrote beside the OPF are replaced, not left to disagree.
     """
-    recaps = "\n".join("%d\t%s\t%s" % (i, h, s) for i, h, s in rows)
-    cast = "\n".join("%d\t%s\t%s" % (i, n, d) for i, n, d in cast_rows)
-
-    import shutil
-    import tempfile
-
-    fd, tmp = tempfile.mkstemp(suffix=".epub", dir=str(book.parent))
-    import os
+    files = {
+        "parts.tsv": "\n".join("%d\t%s\t%d\t%s\t%s" % (o, p, e, _clean(lab), _clean(s))
+                               for o, p, e, lab, s in parts),
+        "people.tsv": "\n".join("%d\t%s\t%d\t%s\t%s\t%d\t%s" % (o, p, n, _clean(w), st, c, _clean(t))
+                                for o, p, n, w, st, c, t in people),
+        "recaps.tsv": "\n".join("%d\t%s\t%s\t%s" % (o, p, _clean(lab), _clean(s))
+                                for o, p, lab, s in chapters),
+        "spine.tsv": "\n".join("%d\t%s" % (o, p) for o, p in spine),
+        "meta.tsv": "\n".join("%s\t%s" % (k, _clean(v)) for k, v in meta),
+        "cast.tsv": "\n".join("%d\t%s\t%s\t%s" % (o, p, _clean(w), _clean(t))
+                              for o, p, w, t in cast),
+    }
+    # built in the system temp folder, never beside the book: a library
+    # server watching that folder would import a stray .epub as a new book
+    fd, tmp = tempfile.mkstemp(suffix=".epubkit-tmp")
     os.close(fd)
-    with zipfile.ZipFile(book) as zin:
-        names = zin.namelist()
-        opf_name = next((n for n in names if n.endswith(".opf")), None)
-        base = (opf_name.rsplit("/", 1)[0] + "/") if opf_name and "/" in opf_name else ""
-        want = {base + "recaps.tsv": recaps, base + "cast.tsv": cast}
-        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
-            if "mimetype" in names:
-                zi = zipfile.ZipInfo("mimetype")
-                zi.compress_type = zipfile.ZIP_STORED
-                zout.writestr(zi, zin.read("mimetype"))
-            for n in names:
-                if n == "mimetype" or n in want:
-                    continue
-                data = zin.read(n)
-                if n == opf_name:
-                    data = _declare(data.decode("utf-8", "ignore")).encode("utf-8")
-                zout.writestr(n, data)
-            for n, body in want.items():
-                if body:
-                    zout.writestr(n, body)
-    shutil.move(tmp, str(book))
+    try:
+        with zipfile.ZipFile(book) as zin:
+            names = zin.namelist()
+            opf_name = _opf_name(zin)
+            base = posixpath.dirname(opf_name) if opf_name else ""
+            here = posixpath.join(base, RECAP_DIR) if base else RECAP_DIR
+            want = {here + "/" + k: v for k, v in files.items() if v}
+            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+                if "mimetype" in names:
+                    zi = zipfile.ZipInfo("mimetype")
+                    zi.compress_type = zipfile.ZIP_STORED
+                    zout.writestr(zi, zin.read("mimetype"))
+                for n in names:
+                    if n == "mimetype" or _is_ours(n, base):
+                        continue
+                    info = zin.getinfo(n)
+                    data = zin.read(n)
+                    if n == opf_name:
+                        data = _declare(data.decode("utf-8", "ignore"),
+                                        [k for k in files if files[k]]).encode("utf-8")
+                    # the member's own name, date and compression, so nothing
+                    # but the recaps differs from the book that came in
+                    zout.writestr(info, data)
+                for n, body in want.items():
+                    zout.writestr(n, body + "\n", compress_type=zipfile.ZIP_DEFLATED,
+                                  compresslevel=9)
+        problem = _changed_besides_recaps(book, tmp)
+        if problem:
+            raise RuntimeError("refusing to write %s: %s" % (book.name, problem))
+        # Overwrite the file in place rather than renaming a new one over it:
+        # same path, same inode, so a library server watching the folder sees
+        # its book modified, not one book deleted and another added.
+        shutil.copyfile(tmp, str(book))
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
 
 
-def _declare(opf: str) -> str:
+_OURS = ("recaps", "cast", "parts", "people", "spine", "meta")
+
+
+def _is_ours(name: str, base: str) -> bool:
+    """A recap file this stage (or an earlier version of it) wrote."""
+    rel = name[len(base) + 1:] if base and name.startswith(base + "/") else name
+    if rel.startswith(RECAP_DIR + "/"):
+        return rel[len(RECAP_DIR) + 1:].split(".")[0] in _OURS and rel.endswith(".tsv")
+    return rel in ("recaps.tsv", "cast.tsv")          # the old flat layout
+
+
+def _changed_besides_recaps(old: Path, new: str) -> str:
+    """'' when the only differences are recap files and their manifest lines.
+
+    This is the guarantee behind rewriting books that are already in a
+    library: text, images, styles, metadata and every koboSpan come out
+    byte-for-byte as they went in.
+    """
+    with zipfile.ZipFile(old) as a, zipfile.ZipFile(new) as b:
+        if b.testzip() is not None:
+            return "the new file fails its own CRC check"
+        opf_name = _opf_name(a)
+        base = posixpath.dirname(opf_name) if opf_name else ""
+        keep_a = [n for n in a.namelist() if not _is_ours(n, base)]
+        keep_b = [n for n in b.namelist() if not _is_ours(n, base)]
+        if sorted(keep_a) != sorted(keep_b):
+            return "the list of files inside it changed"
+        for n in keep_a:
+            x, y = a.read(n), b.read(n)
+            if n == opf_name:
+                x, y = _strip_recap_items(x), _strip_recap_items(y)
+            if x != y:
+                return "%s changed" % n
+    return ""
+
+
+def _strip_recap_items(opf: bytes) -> bytes:
+    return re.sub(rb'<item\b[^>]*\bhref="(?:%s/)?(?:%s)\.tsv"[^>]*/>'
+                  % (RECAP_DIR.encode(), "|".join(_OURS).encode()), b"", opf)
+
+
+def _declare(opf: str, present) -> str:
+    # drop declarations of the old flat files and of any recap file we are
+    # rewriting, then declare what is actually there
+    opf = _strip_recap_items(opf.encode("utf-8")).decode("utf-8")
+    ids = set(re.findall(r'<item\b[^>]*\bid="([^"]+)"', opf))
     add = ""
-    for ident, href, mt in (("recaps-tsv", "recaps.tsv", "text/plain"),
-                            ("cast-tsv", "cast.tsv", "text/plain")):
-        if 'href="%s"' % href not in opf:
-            add += '<item id="%s" href="%s" media-type="%s"/>' % (ident, href, mt)
+    for name in present:
+        ident = "recap-" + name.replace(".", "-")
+        while ident in ids:
+            ident += "x"
+        add += ('<item id="%s" href="%s/%s" media-type="text/tab-separated-values"/>'
+                % (ident, RECAP_DIR, name))
     if add and "</manifest>" in opf:
         opf = opf.replace("</manifest>", add + "</manifest>", 1)
     return opf
+
+
+# ------------------------------------------------------------ audit
+
+
+def audit(book: Path) -> dict:
+    """What recap data a book carries, without a model and without changing it.
+
+    kind is one of:
+      none      - no recap data
+      flat      - recaps.tsv beside the OPF, from epubkit before passages.
+                  recap.sh never looked there, so these never showed on a Kobo
+      chapters  - recaps/recaps.tsv only: whole chapters, from gen_recaps.py
+      passages  - recaps/parts.tsv: up to the page, with the who's who
+    """
+    out = {"book": book.name, "kind": "none", "format": 0, "passages": 0,
+           "chapters": 0, "people": 0, "heard_of": 0, "recap_kb": 0.0,
+           "book_kb": round(book.stat().st_size / 1024, 1), "kepub": False,
+           "passage_words": "", "model": "", "main_character": "",
+           "lead_off": False, "error": ""}
+    try:
+        with zipfile.ZipFile(book) as z:
+            names = z.namelist()
+            opf_name = _opf_name(z)
+            base = posixpath.dirname(opf_name) if opf_name else ""
+            here = (base + "/" if base else "") + RECAP_DIR + "/"
+            ours = [n for n in names if _is_ours(n, base)]
+            out["recap_kb"] = round(sum(z.getinfo(n).compress_size for n in ours) / 1024, 1)
+            out["kepub"] = any(b"koboSpan" in z.read(n) for n in names
+                               if n.lower().endswith((".xhtml", ".html", ".htm")))
+
+            def rows(name):
+                return [r.split("\t") for r in
+                        z.read(here + name).decode("utf-8", "ignore").splitlines() if r]
+
+            if here + "parts.tsv" in names:
+                out["kind"] = "passages"
+                parts = rows("parts.tsv")
+                out["passages"] = len(parts)
+                out["chapters"] = len({p[0] for p in parts})
+                if here + "people.tsv" in names:
+                    people = rows("people.tsv")
+                    who = {r[3] for r in people if len(r) > 4}
+                    met = {r[3] for r in people if len(r) > 4 and r[4] == "met"}
+                    out["people"], out["heard_of"] = len(who), len(who - met)
+                if here + "meta.tsv" in names:
+                    meta = dict(r[:2] for r in rows("meta.tsv") if len(r) >= 2)
+                    out["format"] = int(meta.get("format", 0) or 0)
+                    out["passage_words"] = meta.get("passage_words", "")
+                    out["model"] = meta.get("model", "")
+                    out["main_character"] = meta.get("main_character", "")
+                    # a series named after a person in the book ("Detective
+                    # Gina Harte") whose recaps were written around someone
+                    # else: done before the series-lead rule, redo them
+                    series = ""
+                    if opf_name:
+                        opf = z.read(opf_name).decode("utf-8", "ignore")
+                        m = re.search(r'name="calibre:series" content="([^"]*)"', opf) or \
+                            re.search(r'property="belongs-to-collection"[^>]*>([^<]*)<', opf)
+                        series = html.unescape(m.group(1)) if m else ""
+                    if series and here + "people.tsv" in names:
+                        firsts = {r[3].split()[0].lower() for r in people
+                                  if len(r) > 4 and r[3].split()}
+                        words = {w.lower() for w in re.findall(r"[A-Za-z][\w']{2,}", series)}
+                        lead = (out["main_character"].split() or [""])[0].lower()
+                        named = words & firsts
+                        out["lead_off"] = bool(named) and lead not in words
+            elif here + "recaps.tsv" in names:
+                out["kind"] = "chapters"
+                out["chapters"] = len(rows("recaps.tsv"))
+                if here + "cast.tsv" in names:
+                    out["people"] = len({r[2] for r in rows("cast.tsv") if len(r) > 2})
+            elif any(n.endswith("recaps.tsv") for n in ours):
+                out["kind"] = "flat"
+                flat = next(n for n in ours if n.endswith("recaps.tsv"))
+                out["chapters"] = len([r for r in z.read(flat).decode(
+                    "utf-8", "ignore").splitlines() if r])
+    except (zipfile.BadZipFile, OSError, KeyError, ValueError) as exc:
+        out["error"] = str(exc)
+    return out

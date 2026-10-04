@@ -18,13 +18,30 @@ class ConvertStage(Stage):
     name = "convert"
 
     def applies(self, ctx: Context) -> bool:
-        return ctx.meta.get("format_in") in ("pdf", "mobi", "fb2")
+        if ctx.meta.get("format_in") in ("pdf", "mobi", "fb2"):
+            return True
+        return self._kindle_comic(ctx) is not None
+
+    @staticmethod
+    def _kindle_comic(ctx):
+        """A Kindle panel-view comic in EPUB clothing: every page blank on a Kobo."""
+        if ctx.meta.get("format_in") not in ("epub", "kepub"):
+            return None
+        if "kindle_comic" not in ctx.meta:
+            from ..tools import kindle_comic
+            ctx.meta["kindle_comic"] = kindle_comic.check(ctx.path)
+        found = ctx.meta["kindle_comic"]
+        return found if found.get("kind") == "blank-pages" else None
 
     def run(self, ctx: Context) -> StageResult:
         kind = ctx.meta.get("format_in")
         src = ctx.path
         out_dir = ctx.work / "converted"
         out_dir.mkdir(parents=True, exist_ok=True)
+
+        comic = self._kindle_comic(ctx)
+        if comic:
+            return self._rebuild_comic(ctx, src, out_dir, comic)
 
         if kind == "mobi":
             return self._mobi(ctx, src, out_dir)
@@ -33,6 +50,32 @@ class ConvertStage(Stage):
         return self._pdf(ctx, src, out_dir)
 
     # ------------------------------------------------------------------
+
+    def _rebuild_comic(self, ctx, src: Path, out_dir: Path, found) -> StageResult:
+        """Rebuild a Kindle panel-view comic as a real fixed-layout book.
+
+        Its pages are pictures pinned with position:absolute in a zero-size
+        box and it is not marked fixed-layout, so every page shows blank on a
+        Kobo and in Grimmory's reader, though every picture is in the file.
+        """
+        from ..tools import kindle_comic
+        name = src.name if src.name.endswith(".kepub.epub") else \
+            src.name[:-len(".epub")] + ".kepub.epub"
+        dst = out_dir / name
+        try:
+            r = kindle_comic.rebuild(str(src), str(dst), panel=ctx.config.convert.panel,
+                                    quality=getattr(ctx.config.convert, "comic_quality", 0) or 88)
+        except Exception as exc:                            # noqa: BLE001
+            return StageResult(ok=False,
+                               message="Kindle comic rebuild failed: %s" % exc)
+        ctx.meta["fixed_layout"] = True
+        ctx.note("a Kindle comic whose pages a Kobo cannot lay out; "
+                 "rebuilt as a fixed-layout picture book (%d pages, %s)"
+                 % (r["pages"], r.get("picture_px", "")))
+        if found.get("low_res"):
+            ctx.note("its pictures are only %s - they will look soft on the "
+                     "device; a better copy would fix that" % found.get("picture_px"))
+        return StageResult(path=dst)
 
     def _mobi(self, ctx, src: Path, out_dir: Path) -> StageResult:
         # mobi2epub takes an output *directory* and names the file itself
@@ -43,6 +86,27 @@ class ConvertStage(Stage):
                                message="mobi conversion failed: %s"
                                        % _tail(r.stderr or r.stdout))
         ctx.note("converted from mobi")
+        # A Kindle comic comes out of its wrapper with Amazon's panel layout:
+        # every page blank on a Kobo (Dog Man 1 did exactly this). Check the
+        # unpacked book the same way an EPUB is checked, and rebuild it.
+        from ..tools import kindle_comic
+        found = kindle_comic.check(dst)
+        ctx.meta["kindle_comic"] = found
+        if found.get("kind") == "blank-pages":
+            return self._rebuild_comic(ctx, dst, out_dir, found)
+        if found.get("kind") == "fixed-layout":
+            if _kindle_fixed_layout(dst):
+                # Kindle's own fixed layout: sized by an Amazon-only OPF
+                # setting, no viewport on any page, Amazon attributes
+                # throughout. A Kobo cannot size those pages. The pictures
+                # are full size, so rebuilding loses nothing.
+                return self._rebuild_comic(ctx, dst, out_dir, found)
+            ctx.meta["fixed_layout"] = True
+        elif found.get("kind") == "lost-fixed-layout":
+            if kindle_comic.repair_flag(str(dst)):
+                ctx.meta["fixed_layout"] = True
+                ctx.note("marked fixed-layout again (its pages are sized "
+                         "pictures but the flag was missing)")
         return StageResult(path=dst)
 
     def _fb2(self, ctx, src: Path, out_dir: Path) -> StageResult:
@@ -129,6 +193,22 @@ class ConvertStage(Stage):
                         "convert.split_spreads = \"force\" cuts them anyway)"
                         if kept else ""))
         return StageResult(path=dst)
+
+
+def _kindle_fixed_layout(path) -> bool:
+    """Fixed-layout pages made by Kindle Comic Creator, with no viewport."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as z:
+            docs = [n for n in z.namelist() if n.lower().endswith((".xhtml", ".html"))]
+            sample = [z.read(n)[:4000] for n in docs[1:8]]
+    except (zipfile.BadZipFile, OSError):
+        return False
+    if not sample:
+        return False
+    no_viewport = all(b'name="viewport"' not in d for d in sample)
+    amazon = any(b"KC2" in d or b"data-AmznRemoved" in d or b"amzn" in d for d in sample)
+    return no_viewport and amazon
 
 
 def _tail(text: str | None, n: int = 240) -> str:

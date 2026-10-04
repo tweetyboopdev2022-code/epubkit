@@ -130,8 +130,37 @@ def shrink(data, name, panel, quality):
     return out if len(out) < len(data) else None
 
 
+def repage(data, panel, quality, gain=0.85):
+    """A picture-book page, re-encoded at `quality` (and fitted to the panel).
+
+    For a fixed-layout book the picture IS the page, so this is only worth
+    doing when it clearly pays: kept when the result is under `gain` of the
+    original. Colour is stored at half resolution (4:2:0); the Clara Colour's
+    colour layer is 150 ppi against 300 for black, so that half is never
+    drawn anyway. Line work stays at full resolution."""
+    try:
+        im = Image.open(io.BytesIO(data))
+        im.load()
+    except Exception:
+        return None
+    if im.mode not in ("RGB", "L", "CMYK", "YCbCr"):
+        return None                      # transparency: leave it
+    w, h = im.size
+    scale = min(panel[0] / w, panel[1] / h, 1.0)
+    if scale < 1.0:
+        im = im.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.LANCZOS)
+    buf = io.BytesIO()
+    if im.mode == "L":
+        im.save(buf, "JPEG", quality=quality, optimize=True)
+    else:
+        im.convert("RGB").save(buf, "JPEG", quality=quality, optimize=True,
+                               subsampling="4:2:0")
+    out = buf.getvalue()
+    return out if len(out) < gain * len(data) else None
+
+
 def process(path, panel, quality, apply, drop_orphans, drop_fonts, min_save=0,
-            png_to_jpeg=False):
+            png_to_jpeg=False, fixed_quality=0):
     try:
         z = zipfile.ZipFile(path)
     except zipfile.BadZipFile:
@@ -141,8 +170,12 @@ def process(path, panel, quality, apply, drop_orphans, drop_fonts, min_save=0,
     opf, refs, raw = referenced(z)
     if opf is None:
         z.close(); return None
-    if is_fixed_layout(raw):
+    fixed = is_fixed_layout(raw)
+    if fixed and not fixed_quality:
         z.close(); return ("fixed-layout, skipped", 0, 0)
+    if fixed:
+        # a picture book: pages are re-encoded, never renamed, never dropped
+        drop_orphans = drop_fonts = png_to_jpeg = False
 
     before = os.path.getsize(path)
     new, saved_img, saved_orphan, saved_font, n_img = {}, 0, 0, 0, 0
@@ -160,6 +193,13 @@ def process(path, panel, quality, apply, drop_orphans, drop_fonts, min_save=0,
                 drop.add(n); saved_font += i.compress_size; continue
         if ext in IMG:
             data = z.read(n)
+            if fixed:
+                out = repage(data, panel, fixed_quality) \
+                    if ext in (".jpg", ".jpeg") else None
+                if out:
+                    new[n] = out; n_img += 1
+                    saved_img += max(0, i.compress_size - len(out))
+                continue
             out = shrink(data, n, panel, quality)
             if out is None and png_to_jpeg:
                 cand = n[:-4] + ".jpg"
@@ -235,6 +275,10 @@ def main(argv):
     ap.add_argument("--panel", default="1072x1448",
                     help="device panel, WxH (Clara Colour 1072x1448, Libra 1264x1680)")
     ap.add_argument("--quality", type=int, default=88, help="JPEG quality (default 88)")
+    ap.add_argument("--fixed-quality", type=int, default=0, metavar="Q",
+                    help="also recompress picture books (comics, fixed layout) at "
+                         "this JPEG quality; each page is kept only if it comes "
+                         "out at least 15%% smaller. 0 = leave them alone (default)")
     ap.add_argument("--apply", action="store_true", help="rewrite the files")
     ap.add_argument("--min-save", type=float, default=0.0, metavar="MB",
                     help="only rewrite a book that saves at least this many MB. "
@@ -277,7 +321,7 @@ def main(argv):
             continue
         b = os.path.getsize(p)
         r = process(p, panel, a.quality, a.apply, a.drop_orphans, a.drop_fonts,
-                    a.min_save * 1e6, a.png_to_jpeg)
+                    a.min_save * 1e6, a.png_to_jpeg, a.fixed_quality)
         if not r:
             continue
         what, saved, n = r

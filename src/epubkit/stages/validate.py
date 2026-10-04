@@ -51,6 +51,14 @@ class ValidateStage(Stage):
                         "a book first" % kind)
 
         detect_omnibus(ctx, book)
+        # A picture book must leave still marked as one. Every step that
+        # rewrites the package has dropped that flag at some point, and a
+        # Kobo then lays the pages out as text: blank or broken pages.
+        if ctx.meta.get("fixed_layout"):
+            from ..tools import kindle_comic
+            if kindle_comic.check(book).get("kind") == "lost-fixed-layout" \
+                    and kindle_comic.repair_flag(str(book)):
+                ctx.note("fixed-layout flag had been dropped; put back")
         if not ec.available():
             # A missing validator is a setup problem, not a broken book, and
             # must not fail every title in the batch.

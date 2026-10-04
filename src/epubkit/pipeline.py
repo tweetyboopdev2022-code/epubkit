@@ -22,12 +22,14 @@ from .stages.kepub import KepubStage
 from .stages.metadata import MetadataStage
 from .stages.recaps import RecapStage
 from .stages.repair import RepairStage
+from .stages.split import SplitStage
 from .stages.validate import ValidateStage
 from .state import STATE_NAME, RunState, fingerprint
 
 STAGE_CLASSES = {
     "ingest": IngestStage,
     "convert": ConvertStage,
+    "split": SplitStage,
     "metadata": MetadataStage,
     "repair": RepairStage,
     "kepub": KepubStage,
@@ -83,8 +85,14 @@ class Pipeline:
         self.log = log
         self.provider = provider
         self.progress = progress or Progress()        # disabled unless given a live one
-        self.stages = [STAGE_CLASSES[n]() for n in config.run.stages
-                       if n in STAGE_CLASSES]
+        names = list(config.run.stages)
+        # A config written before splitting existed lists no "split" stage.
+        # The decision "one book or several?" belongs ahead of everything that
+        # works per book, so it is put there unless splitting is switched off.
+        if ("split" not in names and "metadata" in names
+                and config.convert.split_omnibus != "off"):
+            names.insert(names.index("metadata"), "split")
+        self.stages = [STAGE_CLASSES[n]() for n in names if n in STAGE_CLASSES]
 
     def run(self) -> RunState:
         cfg = self.config
@@ -136,9 +144,24 @@ class Pipeline:
 
         state.meta["elapsed"] = time.time() - started
         state.save()
-        path = report_stage.write(state, out, time.time() - started)
+        rows = self._shelves(out, work_root)
+        path = report_stage.write(state, out, time.time() - started, rows)
         self.log.info("report written to %s", path)
         return state
+
+    def _shelves(self, out: Path, work_root: Path) -> list[dict]:
+        """Last step: rate every finished book Kids / Teens / Adult."""
+        if not self.config.metadata.suggest_shelves:
+            return []
+        from . import shelves
+        self.log.info("choosing a library for each finished book...")
+        try:
+            return shelves.classify_library(
+                out, self.provider, work_root / "shelves-cache.json",
+                self.config.metadata.shelf_lookup, log=lambda m: self.log.info("  %s", m))
+        except Exception as exc:                                    # noqa: BLE001
+            self.log.warning("could not suggest libraries: %s", str(exc)[:120])
+            return []
 
     # ------------------------------------------------------------------
 
@@ -147,6 +170,12 @@ class Pipeline:
         rec = state.record(source)
         rec.notes = []
         rec.stages = {}
+        rec.split_into = 0
+        rec.omnibus = []
+        # a retry starts clean: "85 errors - not written" from the last run
+        # was printed next to "ok" when the retry succeeded
+        rec.message = ""
+        rec.errors_before = rec.errors_after = None
         started = time.time()
         work = cfg.paths.work / _slug(source.name)
         key = str(source)
@@ -157,34 +186,14 @@ class Pipeline:
             ctx = Context(config=cfg, record=rec, path=source, work=work,
                           log=self.log, provider=self.provider,
                           step=lambda text: self.progress.detail(key, text))
-
-            for i, stage in enumerate(self.stages, 1):
-                self.progress.stage(key, stage.name, i, len(self.stages))
-                if not stage.applies(ctx):
-                    rec.mark(stage.name, "skipped")
-                    continue
-                result = stage.run(ctx)
-                rec.mark(stage.name, "ok" if result.ok else "failed")
-                if result.path:
-                    ctx.path = result.path
-                if not result.ok:
-                    rec.status = "failed"
-                    rec.message = result.message
-                    self.log.warning("%-52s %s", source.name[:52], result.message)
-                    return
-                if result.stop:
-                    rec.status = "skipped"
-                    rec.message = result.message
-                    return
-
-            final = cfg.paths.output / ctx.path.name
-            final.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ctx.path, final)
-            rec.output = str(final)
-            rec.status = "done"
-            rec.fingerprint = fingerprint(source)
-            self.log.info("%-52s ok%s", source.name[:52],
-                          "  (%s)" % rec.message if rec.message else "")
+            outcome = self._stages(ctx, source.name, key, 0)
+            if outcome == "done":
+                self._finish(ctx, rec)
+                rec.fingerprint = fingerprint(source)
+                self.log.info("%-52s ok%s", source.name[:52],
+                              "  (%s)" % rec.message if rec.message else "")
+            elif outcome == "split":
+                self._parts(ctx, rec, state, source)
         except Exception as exc:                            # noqa: BLE001
             rec.status = "failed"
             rec.message = "%s: %s" % (type(exc).__name__, exc)
@@ -197,6 +206,87 @@ class Pipeline:
             state.update(rec)
             if not cfg.run.verbose:
                 shutil.rmtree(work, ignore_errors=True)
+
+    def _stages(self, ctx: Context, name: str, key: str, start: int) -> str:
+        """Run the stages from `start`. done | failed | skipped | split."""
+        rec = ctx.record
+        for i, stage in enumerate(self.stages, 1):
+            if i <= start:
+                continue
+            self.progress.stage(key, stage.name, i, len(self.stages))
+            if not stage.applies(ctx):
+                rec.mark(stage.name, "skipped")
+                continue
+            result = stage.run(ctx)
+            rec.mark(stage.name, "ok" if result.ok else "failed")
+            if result.path:
+                ctx.path = result.path
+            if not result.ok:
+                rec.status = "failed"
+                rec.message = result.message
+                self.log.warning("%-52s %s", name[:52], result.message)
+                return "failed"
+            if result.parts:
+                ctx.meta["parts"] = result.parts
+                ctx.meta["resume_after"] = i
+                return "split"
+            if result.stop:
+                rec.status = "skipped"
+                rec.message = result.message
+                return "skipped"
+        return "done"
+
+    def _finish(self, ctx: Context, rec) -> None:
+        final = self.config.paths.output / ctx.path.name
+        final.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ctx.path, final)
+        rec.output = str(final)
+        rec.status = "done"
+
+    def _parts(self, ctx: Context, rec, state: RunState, source: Path) -> None:
+        """The file held several books: each goes through the rest of the pipeline alone.
+
+        Run one after another inside this book's worker, so its working
+        folder outlives all of them.
+        """
+        parts = ctx.meta["parts"]
+        after = ctx.meta["resume_after"]
+        self.progress.extend(len(parts))
+        bad = 0
+        for n, part in enumerate(parts, 1):
+            prec = state.record(part)
+            prec.notes, prec.stages, prec.omnibus = [], {}, []
+            prec.parent, prec.status, prec.message = str(source), "pending", ""
+            key = str(part)
+            started = time.time()
+            self.progress.book_start(key, part.name)
+            try:
+                pctx = Context(config=self.config, record=prec, path=part,
+                               work=ctx.work / ("part%02d" % n), log=self.log,
+                               provider=self.provider,
+                               step=lambda text, k=key: self.progress.detail(k, text))
+                pctx.work.mkdir(parents=True, exist_ok=True)
+                if self._stages(pctx, part.name, key, after) == "done":
+                    self._finish(pctx, prec)
+                    self.log.info("%-52s ok  (part %d of %d)", part.name[:52],
+                                  n, len(parts))
+            except Exception as exc:                        # noqa: BLE001
+                prec.status = "failed"
+                prec.message = "%s: %s" % (type(exc).__name__, exc)
+                self.log.warning("%-52s %s", part.name[:52], prec.message)
+            finally:
+                bad += prec.status != "done"
+                self.progress.book_end(key, failed=prec.status == "failed")
+                prec.seconds = time.time() - started
+                state.update(prec)
+        if bad:
+            rec.status, rec.message = "failed", "%d of %d parts were not written" % (bad, len(parts))
+            self.log.warning("%-52s %s", source.name[:52], rec.message)
+        else:
+            rec.status, rec.output = "done", None
+            rec.message = "split into %d books" % len(parts)
+            rec.fingerprint = fingerprint(source)
+            self.log.info("%-52s split into %d books", source.name[:52], len(parts))
 
 
 def _is_inside(inner: Path, outer: Path) -> bool:
