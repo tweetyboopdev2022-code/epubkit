@@ -48,8 +48,8 @@ DEFAULT_ENDPOINT = {
     "ollama": "http://localhost:11434",
 }
 
-ALL_STAGES = ("ingest", "convert", "metadata", "repair", "kepub", "validate",
-              "recaps", "report")
+ALL_STAGES = ("ingest", "convert", "split", "metadata", "repair", "kepub", "validate",
+              "recaps", "report", "shelves")
 
 
 class ConfigError(Exception):
@@ -122,6 +122,10 @@ class MetadataConfig:
     filename_template: str = "{series} {index:02d} - {title} - {authors}"
     standalone_template: str = "{title} - {authors}"
     request_delay: float = 1.0
+    #: final step: suggest Kids / Teens / Adult for every finished book
+    suggest_shelves: bool = True
+    #: let that step look the book up in Open Library / Google Books
+    shelf_lookup: bool = True
 
 
 @dataclass
@@ -129,9 +133,22 @@ class RecapConfig:
     enabled: bool = True
     #: a chapter shorter than this is front matter, not a chapter
     min_chars: int = 2000
-    #: never recap the chapter the reader is inside - only what is behind them
+    #: unused since recaps went down to the passage: the device now shows only
+    #: passages the bookmark is past. Kept so existing config files still load.
     lag_chapters: int = 1
+    #: a chapter is recapped in passages of about this many words, so a reader
+    #: partway through a chapter still gets everything up to their page
+    passage_words: int = 800
+    #: the who's who: everyone met or merely heard of, from the paragraph that
+    #: first names them
     cast: bool = True
+    #: also write the chapter-level recaps.tsv and cast.tsv that copies of
+    #: recap.sh from before passages read. Off: the current recap.sh reads the
+    #: passage files, and the old ones only repeat the same text
+    legacy_files: bool = False
+    #: who the relationships are described against. Empty: worked out from
+    #: the book. Set it when a run is limited to one book or one series
+    main_character: str = ""
     language: str = "auto"
 
 
@@ -158,13 +175,21 @@ class ConvertConfig:
     kepub: bool = True
     #: recompress images in books above this size, in MB. 0 turns it off.
     slim_above_mb: float = 25.0
-    #: look for omnibuses and say so in the report; splitting stays manual
+    #: look for omnibuses and say so in the report
     detect_omnibus: bool = True
+    #: auto | report | off. "auto" splits a file that holds several books, when
+    #: the boundaries come from its own table of contents, before anything else
+    #: runs; "report" only says so; "off" does not look.
+    split_omnibus: str = "auto"
     #: fill in a plain typographic cover when a book has none
     make_missing_covers: bool = True
     #: device panel for fixed-layout output, WxH
     panel: str = "1072x1448"
     jpeg_quality: int = 88
+    #: JPEG quality for picture books (comics, fixed layout): new rebuilds,
+    #: and existing ones the slim step recompresses. 0 leaves picture books
+    #: alone. 80 looks the same on a Clara Colour at about 60% of the size.
+    comic_quality: int = 80
 
 
 @dataclass

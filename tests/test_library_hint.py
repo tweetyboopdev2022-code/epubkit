@@ -4,7 +4,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from epubkit.library_hint import ADULT, KIDS, TEENS, recommend
-from epubkit.stages.report import _library_section
 from epubkit.state import BookRecord
 
 
@@ -54,36 +53,12 @@ def test_a_blurb_that_merely_mentions_young_people_stays_adult():
     assert recommend([], "A middle-grade adventure about a haunted lighthouse.").library == KIDS
 
 
-def test_the_report_groups_books_and_flags_the_unsure_ones(tmp_path: Path):
-    def rec(title, shelf, conf, why=""):
-        return BookRecord(source=str(tmp_path / (title + ".epub")), status="done",
-                          title=title, authors="A. Writer", shelf=shelf,
-                          shelf_confidence=conf, shelf_why=why)
-    text = "\n".join(_library_section([
-        rec("Cat Tales", "Kids", "high", "says: picture books"),
-        rec("Maybe Kids", "Kids", "medium", "says: juvenile fiction"),
-        rec("Night Shift", "Adult › Fiction", "medium", "nothing marks it"),
-        rec("No Idea", "Adult", "low", "no subjects"),
-    ]))
-    assert "## Suggested libraries" in text
-    assert text.index("**Kids**") < text.index("**Adult**")
-    assert "Cat Tales — A. Writer (says: picture books)\n" in text + "\n"
-    assert "Maybe Kids" in text and "*check*" in text.split("Maybe Kids")[1].splitlines()[0]
-    assert "*check*" in text.split("No Idea")[1].splitlines()[0]
-    assert "*check*" not in text.split("Night Shift")[1].splitlines()[0]
-
-
-def test_no_section_when_nothing_was_rated(tmp_path):
-    assert _library_section([BookRecord(source=str(tmp_path / "a.epub"), status="done")]) == []
-
-
-def test_the_suggestion_is_bold_in_each_books_entry(tmp_path):
-    from epubkit.stages.report import write
-    from epubkit.state import RunState
-    state = RunState(tmp_path / "state.json")
-    src = tmp_path / "a.epub"
-    state.books[str(src)] = BookRecord(source=str(src), status="done", title="A Book",
-                                       shelf="Teens", shelf_confidence="high",
-                                       shelf_why="says: young adult fiction")
-    text = write(state, tmp_path, 1.0).read_text()
-    assert "  **suggested library: Teens**" in text
+def test_series_index_formats_whatever_type_it_arrives_as():
+    from epubkit.stages.report import _index_text
+    assert _index_text("1") == " #1"
+    assert _index_text(1) == " #1"
+    assert _index_text(1.5) == " #1.5"
+    assert _index_text("2.0") == " #2"
+    assert _index_text("Book 3") == " #Book 3"
+    assert _index_text(None) == ""
+    assert _index_text("") == ""

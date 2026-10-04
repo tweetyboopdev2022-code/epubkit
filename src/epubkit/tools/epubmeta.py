@@ -15,6 +15,12 @@ def esc(s):
     return html.escape(str(s), quote=False).replace('"', '&quot;')
 
 
+LAYOUT_META = re.compile(
+    r'<meta\b[^>]*property="rendition:[^"]*"[^>]*>[^<]*</meta>|'
+    r'<meta\b[^>]*name="(?:fixed-layout|original-resolution|book-type|'
+    r'orientation-lock|RegionMagnification|primary-writing-mode)"[^>]*/?>', re.S)
+
+
 def find_opf(z):
     c = z.read('META-INF/container.xml').decode('utf-8', 'replace')
     return re.search(r'full-path="([^"]+)"', c).group(1)
@@ -158,8 +164,16 @@ def rewrite(src, dst, md, gen_cover_bytes=None):
 
     cover_id = pick_cover_id(opf_xml)
     new_md = build_metadata(md, ver, uid_id, cover_id)
+    # Layout settings are not metadata about the book, they are how it is
+    # drawn. Dropping rendition:layout turned a rebuilt Dog Man back into
+    # a reflowable book - the same thing Grimmory's write-back does.
+    old_md = re.search(r'<metadata\b.*?</metadata\s*>', opf_xml, re.S)
+    keep = LAYOUT_META.findall(old_md.group(0)) if old_md else []
+    if keep:
+        new_md = new_md.replace('  </metadata>', ''.join(
+            '    %s\n' % k.strip() for k in keep) + '  </metadata>')
 
-    new_opf, n = re.subn(r'<metadata\b.*?</metadata\s*>', new_md, opf_xml,
+    new_opf, n = re.subn(r'<metadata\b.*?</metadata\s*>', lambda _m: new_md, opf_xml,
                          count=1, flags=re.S)
     if n != 1:
         raise RuntimeError('could not locate <metadata> in %s' % src)

@@ -459,6 +459,18 @@ def fix_opf(root, uid_hint, content_props, cover_href, nav_href, has_ncx,
             root.remove(el)
             changed.append(legacy)
 
+    # a <meta refines="#uuid"> whose target is gone (the identifier it
+    # described was dropped or renamed upstream) is RSC-005 and describes
+    # nothing
+    ids = {el.get("id") for el in root.iter() if el.get("id")}
+    orphans = [m for m in md.iter()
+               if (m.get("refines") or "").startswith("#")
+               and m.get("refines")[1:] not in ids]
+    for m in orphans:
+        m.getparent().remove(m)
+    if orphans:
+        changed.append("orphan-refines(%d)" % len(orphans))
+
     return uid_value, changed
 
 
@@ -795,6 +807,7 @@ def fix_content(data, book_title=None):
     # comic on the first attempt.
     before = data
     data = TAG_RE.sub(strip_obsolete_attrs, data)
+    data, n_li = drop_li_value_outside_ol(data)
     if data != before:
         notes.append("obsolete-attrs")
 
@@ -825,6 +838,61 @@ def fix_content(data, book_title=None):
         notes.append("dup-ids(%d)" % n_dupes[0])
 
     return data, notes
+
+
+LIST_TAG_RE = re.compile(rb"<(/?)(ol|ul|menu|li)\b([^>]*)>", re.I)
+LI_VALUE_RE = re.compile(rb"""\svalue\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>/]+)""", re.I)
+
+
+def drop_li_value_outside_ol(data):
+    """<li value="3"> is only allowed inside an <ol>. Calibre writes it on
+    every item of a <ul> table of contents (Their Cold Hearts had 85 of them,
+    each an RSC-005). The number is never shown in a <ul>, so dropping it
+    changes nothing on the page."""
+    stack, n = [], [0]
+
+    def sub(mo):
+        close, name = mo.group(1), mo.group(2).lower()
+        if name in (b"ol", b"ul", b"menu"):
+            if close:
+                if name in stack:
+                    while stack and stack.pop() != name:
+                        pass
+            else:
+                stack.append(name)
+            return mo.group(0)
+        if close or (stack and stack[-1] == b"ol"):
+            return mo.group(0)
+        attrs = mo.group(3)
+        new = LI_VALUE_RE.sub(b"", attrs)
+        if new == attrs:
+            return mo.group(0)
+        n[0] += 1
+        return b"<li" + new + b">"
+
+    return LIST_TAG_RE.sub(sub, data), n[0]
+
+
+DEAD_SCRIPT_RE = re.compile(
+    rb'<script\b[^>]*?\ssrc\s*=\s*(["\'])([^"\']*)\1[^>]*?(?:/>|>\s*</script\s*>)',
+    re.I)
+
+
+def drop_dead_scripts(data, exists):
+    """<script src="../js/kobo.js"> left behind by a Kobo store copy after
+    the script itself was removed: RSC-007, and nothing to run anyway."""
+    n = [0]
+
+    def sub(mo):
+        target = mo.group(2).decode("utf-8", "ignore").split("#")[0]
+        if not target or "://" in target or target.startswith("data:"):
+            return mo.group(0)
+        if exists(target):
+            return mo.group(0)
+        n[0] += 1
+        return b""
+
+    return DEAD_SCRIPT_RE.sub(sub, data), n[0]
 
 
 DEAD_HREF_RE = re.compile(rb'(<a\b[^>]*?)\shref\s*=\s*(["\'])([^"\']*)\2', re.I)
@@ -876,6 +944,43 @@ def drop_dead_stylesheet_links(data, exists):
     return DEAD_LINK_RE.sub(sub, data), n[0]
 
 
+def drop_stray_braces(data):
+    """Remove a closing brace that has no opening one (CSS-008).
+
+    Walks the stylesheet skipping comments and quoted strings so a brace inside
+    content: "}" is not counted. Only a brace at depth zero is dropped - the
+    rule before it is left exactly as it was."""
+    out = bytearray()
+    depth = dropped = i = 0
+    n = len(data)
+    while i < n:
+        c = data[i:i + 1]
+        if data.startswith(b"/*", i):
+            j = data.find(b"*/", i + 2)
+            j = n if j == -1 else j + 2
+            out += data[i:j]
+            i = j
+            continue
+        if c in (b'"', b"'"):
+            j = i + 1
+            while j < n and data[j:j + 1] != c:
+                j += 2 if data[j:j + 1] == b"\\" else 1
+            out += data[i:j + 1]
+            i = j + 1
+            continue
+        if c == b"{":
+            depth += 1
+        elif c == b"}":
+            if depth == 0:
+                dropped += 1
+                i += 1
+                continue
+            depth -= 1
+        out += c
+        i += 1
+    return bytes(out), dropped
+
+
 def clean_css(data, exists):
     """Remove url() and @import references to files absent from the book.
 
@@ -904,6 +1009,8 @@ def clean_css(data, exists):
             n[0] += 1
 
     data = CSS_IMPORT_RE.sub(imp, data)
+    data, extra = drop_stray_braces(data)
+    n[0] += extra
 
     dead = []
     for mo in CSS_URL_RE.finditer(data):
@@ -1086,9 +1193,16 @@ def fix_book(src, dst):
         d2, k = drop_dead_links(d, exists)
         d2, k2 = drop_dead_images(d2, exists)
         d2, k3 = drop_dead_stylesheet_links(d2, exists)
-        if k or k2 or k3:
+        d2, k4 = drop_dead_scripts(d2, exists)
+        if k or k2 or k3 or k4:
             fixed_content[n] = d2
-            ndead += k + k2 + k3
+            ndead += k + k2 + k3 + k4
+            # a dropped dead <script> can leave a stale "scripted" claim
+            props = scan_props(d2)
+            if props:
+                content_props[rel(n)] = props
+            else:
+                content_props.pop(rel(n), None)
 
     # stylesheets carry references of their own
     fixed_css = {}
@@ -1240,11 +1354,21 @@ def fix_book(src, dst):
             # Watership Down's navPoints are bare UUIDs, a third of which
             # start with a number. EPUBCheck reports both as "must be an XML
             # name without colons", which points at only half the problem.
+            # A second id="ind" is RSC-005 too. Two entries sharing an id is
+            # a slip in the source, and only the later one is renamed.
+            ncx_seen = set()
+
             def _id(mo):
                 val = mo.group(2)
                 new = val.replace(b":", b"-")
                 if new[:1] and not (new[:1].isalpha() or new[:1] == b"_"):
                     new = b"id-" + new
+                if new in ncx_seen:
+                    k = 2
+                    while b"%s-%d" % (new, k) in ncx_seen:
+                        k += 1
+                    new = b"%s-%d" % (new, k)
+                ncx_seen.add(new)
                 if new == val:
                     return mo.group(0)
                 return mo.group(1) + new + mo.group(3)

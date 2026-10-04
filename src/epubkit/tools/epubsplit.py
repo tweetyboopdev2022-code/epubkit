@@ -25,6 +25,9 @@ def norm(p):
     return posixpath.normpath(p).lstrip('/')
 
 
+PAGE_EXTS = ('.xhtml', '.html', '.htm', '.xml')
+
+
 class Omnibus:
     def __init__(self, path):
         self.z = zipfile.ZipFile(path)
@@ -86,11 +89,24 @@ class Omnibus:
         return res
 
     def closure(self, docs):
+        """Everything the given pages need: images, styles, fonts.
+
+        Other books' pages are deliberately not followed. An omnibus links its books
+        together (a "next book" link, an "also by" page, a shared contents
+        list), and following those pulls the whole omnibus into every part - a
+        13-book set then yields 13 files that each carry all 13 books' text.
+        A link to a page that is not kept becomes a dead link, which the repair
+        stage removes."""
         seen = set(docs)
+        initial = set(docs)
+        spine_pages = set(self.spine_files)
         queue = list(docs)
         while queue:
             cur = queue.pop()
             for r in self.refs_in(cur):
+                if (os.path.splitext(r)[1].lower() in PAGE_EXTS
+                        and r in spine_pages and r not in initial):
+                    continue
                 if r not in seen:
                     seen.add(r)
                     queue.append(r)

@@ -48,6 +48,32 @@ def text_at(raw, span_id):
     return html.unescape(heading), html.unescape(sentence)
 
 
+def open_copy(db):
+    """Open a private copy of the device database, never the live file.
+
+    A read-only open of the live file failed on the Kobo's FAT volume with
+    "unable to open database file", although the file was there and readable:
+    SQLite wants its -wal/-shm companions and a lock beside a database even to
+    read it. Copying the database and any companions to a temporary folder
+    sidesteps all of that, and cannot disturb the device either.
+    """
+    import shutil, tempfile
+    if not os.path.isfile(db):
+        sys.exit("no database at %s - is the Kobo mounted, and is that its name "
+                 "under /Volumes?" % db)
+    tmp = tempfile.mkdtemp(prefix="reading-marker-")
+    copy = os.path.join(tmp, "KoboReader.sqlite")
+    try:
+        for suffix in ("", "-wal", "-shm"):
+            if os.path.exists(db + suffix):
+                shutil.copyfile(db + suffix, copy + suffix)
+    except PermissionError:
+        sys.exit("macOS would not let this read %s. Allow Terminal under System "
+                 "Settings > Privacy & Security > Files and Folders > Removable "
+                 "Volumes, then run it again." % db)
+    return sqlite3.connect(copy)
+
+
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -56,7 +82,7 @@ def main(argv):
     ap.add_argument("--out", default="reading-marker.md")
     a = ap.parse_args(argv)
 
-    con = sqlite3.connect("file:%s?mode=ro" % a.db, uri=True)
+    con = open_copy(a.db)
     rows = con.execute(
         "SELECT ContentID,Title,Attribution,ChapterIDBookmarked,___PercentRead,"
         "DateLastRead FROM content WHERE ContentType=6 AND ReadStatus=1 "

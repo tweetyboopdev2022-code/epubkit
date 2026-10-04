@@ -45,6 +45,9 @@ class StageResult:
     #: True when the stage decided this book should not continue, without
     #: that being an error - an unconvertible format, say
     stop: bool = False
+    #: set by a stage that split this file into several books. The pipeline
+    #: then runs each one through the stages that come after it.
+    parts: list[Path] | None = None
 
 
 class Stage:

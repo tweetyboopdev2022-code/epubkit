@@ -8,10 +8,9 @@ import pytest
 from conftest import make_epub
 
 from epubkit.config import Config, MetadataConfig
-from epubkit.stages import recaps as recaps_mod
 from epubkit.stages.base import Context
 from epubkit.stages.metadata import _filename_for, _safe, _sort_name
-from epubkit.stages.recaps import RecapStage, _cast_rows, _manifest, _parse
+from epubkit.stages.recaps import RecapStage, _manifest
 from epubkit.stages.repair import RepairStage
 from epubkit.stages.validate import ValidateStage
 from epubkit.state import BookRecord
@@ -89,56 +88,7 @@ def test_manifest_parsing_does_not_depend_on_attribute_order():
     assert _manifest(opf) == {"a": "a.xhtml", "b": "b.xhtml", "c": "c.xhtml"}
 
 
-def test_a_recap_is_shown_a_chapter_behind_the_reader(tmp_path, monkeypatch):
-    """The rule that stops a recap spoiling the chapter being read."""
-    book = make_epub(tmp_path / "b.epub", chapters=4, words=900)
-    cfg = Config.load(None, {"source": tmp_path, "output": tmp_path / "o",
-                             "recaps.min_chars": 100, "recaps.lag_chapters": 1})
-
-    class FakeProvider:
-        def complete(self, prompt, system=None, **kw):
-            import re as _re
-            which = _re.search(r"Chapter (\d+)", prompt).group(1)
-            return type("R", (), {"text": "SUMMARY: things happened in %s.\n"
-                                          "CHARACTERS:\nAda - a tester" % which})()
-
-    ctx = context(cfg, book, tmp_path / "work", FakeProvider())
-    (tmp_path / "work").mkdir()
-    assert RecapStage().run(ctx).ok
-
-    with zipfile.ZipFile(book) as z:
-        rows = [r.split("\t") for r in
-                z.read("OEBPS/recaps.tsv").decode().splitlines()]
-    # chapter 1's recap is filed against spine position 1, not 0: a reader
-    # sitting in chapter 1 must not be handed chapter 1's ending
-    by_index = {int(i): s for i, _h, s in rows}
-    assert "in 1" in by_index[1]
-    assert 0 not in by_index
-
-
-def test_recaps_go_in_the_manifest_but_never_the_spine(tmp_path):
-    book = make_epub(tmp_path / "b.epub", chapters=2, words=800)
-    recaps_mod._embed(book, [(1, "c1.xhtml", "a summary")], [(1, "Ada", "a tester")])
-    with zipfile.ZipFile(book) as z:
-        opf = z.read("OEBPS/content.opf").decode()
-        assert "OEBPS/recaps.tsv" in z.namelist()
-    assert 'href="recaps.tsv"' in opf
-    assert "recaps-tsv" not in opf.split("<spine")[1]
-
-
-def test_a_character_is_introduced_at_first_appearance():
-    results = {
-        0: ("c1", "s", "Ada - a tester"),
-        2: ("c3", "s", "Ada - now revealed to be the villain\nBob - a friend"),
-    }
-    rows = _cast_rows(results)
-    assert (0, "Ada", "a tester") in rows          # the first description wins
-    assert (2, "Bob", "a friend") in rows
-    assert not any("villain" in r[2] for r in rows)
-
-
-def test_a_reply_without_a_summary_is_discarded():
-    assert _parse("I'm afraid I can't help with that.") == ("", "")
+# the passage-level behaviour is covered in test_recaps.py
 
 
 def test_recaps_are_skipped_without_a_provider(tmp_path):
@@ -535,3 +485,32 @@ def test_unclosed_tags_do_not_derail_it():
     src = b'<p><span><div>x</div><p>y</p>'
     out, _ = unwrap_inline_around_block(src)
     assert b"x" in out and b"y" in out
+
+
+def test_stray_closing_brace_in_css_is_dropped():
+    from epubkit.tools.fix_epub3 import drop_stray_braces
+    css = b'a { content: "}"; }\n\n}\n/* } */ b { color: red; }\n'
+    fixed, n = drop_stray_braces(css)
+    assert n == 1
+    assert fixed == b'a { content: "}"; }\n\n\n/* } */ b { color: red; }\n'
+    assert drop_stray_braces(b"a{b:c}")[1] == 0
+
+
+def test_a_hand_fix_in_epubkit_overrides_wins(tmp_path):
+    import json
+    from types import SimpleNamespace
+
+    from epubkit.stages.metadata import _override_for
+    src = tmp_path / "[Chicken Squad 01] The First -- Cronin.epub"
+    src.write_text("x")
+    (tmp_path / "epubkit-overrides.json").write_text(json.dumps({
+        "chicken squad 01": {"title": "The First Misadventure",
+                             "series": "Chicken Squad", "series_index": "1",
+                             "authors": "Doreen Cronin", "bogus": "x"}}))
+    ctx = SimpleNamespace(record=SimpleNamespace(source=str(src)))
+    got = _override_for(src, ctx)
+    assert got == {"title": "The First Misadventure", "series": "Chicken Squad",
+                   "series_index": "1", "authors": ["Doreen Cronin"]}
+    assert _override_for(tmp_path / "other.epub",
+                         SimpleNamespace(record=SimpleNamespace(
+                             source=str(tmp_path / "other.epub")))) == {}

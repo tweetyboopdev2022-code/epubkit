@@ -95,6 +95,11 @@ class Progress:
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
+    def extend(self, n: int) -> None:
+        """A file turned out to be several books: the bar has that many more to do."""
+        with self._lock:
+            self._total += n
+
     def book_start(self, key: str, name: str) -> None:
         with self._lock:
             self._active[key] = {"name": name, "stage": "starting", "idx": 0,

@@ -65,6 +65,9 @@ class BookRecord:
     omnibus: list[str] = field(default_factory=list)
     #: which library the book looks suited to (Kids | Teens | Adult), why, and
     #: how sure that is. A suggestion for the report; nothing acts on it.
+    #: how many books this file was split into, and for a part, the file it came from
+    split_into: int = 0
+    parent: str | None = None
     shelf: str | None = None
     shelf_confidence: str = ""
     shelf_why: str = ""
@@ -166,13 +169,20 @@ class RunState:
 
     # -- summary ---------------------------------------------------------
 
+    def current(self) -> dict:
+        """Records whose source is still there. A file moved or deleted
+        since an earlier run is not reported as failing again."""
+        import os
+        return {k: r for k, r in self.books.items()
+                if r.status != "failed" or os.path.exists(r.parent or r.source)}
+
     def counts(self) -> dict[str, int]:
         """What this run did, not what the state file has accumulated."""
         out: dict[str, int] = {}
-        for key, rec in self.books.items():
+        for key, rec in self.current().items():
             status = "skipped" if key in self.skipped_now else rec.status
             out[status] = out.get(status, 0) + 1
         return out
 
     def failed(self) -> list[BookRecord]:
-        return [r for r in self.books.values() if r.status == "failed"]
+        return [r for r in self.current().values() if r.status == "failed"]

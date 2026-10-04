@@ -137,7 +137,9 @@ epubkit run --only validate --in ~/Books/kobo   # re-check a built library
 epubkit run --allow-imperfect         # ship books that improved but aren't clean
 epubkit run -n                        # say what would happen, touch nothing
 epubkit validate ~/Books/kobo         # EPUBCheck a folder, one line per book
-epubkit recaps "Some Book.epub"       # recaps for one book
+epubkit recaps "Some Book.epub"       # recaps for one book, in place
+epubkit recaps ~/library              # every book in a folder; current ones skipped
+epubkit recaps --audit ~/library      # what recap data each book has; no model needed
 ```
 
 In a terminal, `epubkit run` shows what it is doing as it goes: a bar of books
@@ -207,11 +209,26 @@ books are not coming out as kepubs, check that list first
 reported and not shipped; `--allow-imperfect` ships it when it is measurably
 better than what it replaced.
 
-**recaps** summarises each chapter as of the *previous* one, so a recap can
-never spoil the chapter you are about to read. Recaps are keyed to the spine,
-not to chapter numbers, so they survive a restructured book. A cast list tracks
-first appearances. The generated files go in the manifest, not the spine, so
-they never interrupt reading.
+**recaps** summarises each chapter in passages of about `recaps.passage_words`
+words, each filed against the koboSpan paragraph it ends on, so the Kobo can
+recap everything up to the page you are on and nothing past it — including the
+part of the chapter you are halfway through. The who's who lists everyone you
+know about: people you have met, and people you have only heard of — someone
+mentioned in passing, talked about, or in a story a character tells — each
+from the paragraph that first names them, with who they are to the main
+character as of where you are. Everything is keyed to the spine and paragraph,
+not to page numbers, so it survives any font size. The generated files
+(`recaps/parts.tsv`, `people.tsv`, `spine.tsv` and `meta.tsv`) go in the
+manifest, not the spine, so they never interrupt reading, and add about 1% to
+a novel. On the Kobo, `recap.sh` also quotes the line your page begins on,
+lifted straight out of the book.
+
+`epubkit recaps` rewrites books where they are, so it can run over a library
+a server is already serving: before a book is written, every file inside it
+other than the recaps is compared byte-for-byte with the original, and the
+book is left alone if anything else would change. It is overwritten in place
+(same path, same file) rather than replaced, and books whose recaps are
+already current are skipped, so an interrupted run just carries on.
 
 Along the way the same pass does the smaller jobs: a plain typographic cover
 for a book with no artwork at all (never replacing real art), recompression
@@ -316,6 +333,12 @@ project is only found when you run from inside it; copy it to
 unrecognised setting is an error that names the setting rather than being
 ignored silently.
 
+## Maintenance & Storage Tips
+
+* **Automatic Recompression:** Text-heavy recaps can cause file sizes to balloon, but `epubkit` automatically handles lossless recompression for any files exceeding your `convert.slim_above_mb` threshold during the pipeline run[cite: 1].
+* **Managing Backup Folders (`.epubkit-originals`):** The `ingest` stage safely copies every original raw file into an `.epubkit-originals` folder before modifications begin[cite: 1]. If you are tight on disk space, these folders can be safely cleared out once your library is verified.
+* **Cleaning Redundant Formats:** Because converted books are saved as `.kepub.epub` files while legacy raw `.epub` files may remain, matching files via their internal metadata (Title and Author) rather than filenames is the safest way to clean up redundant plain `.epub` duplicates.
+
 ## Safety
 
 Originals are copied to a backup folder before anything else happens. Books are
@@ -331,3 +354,16 @@ Deploying to the device is deliberately not part of this pipeline.
 
 MIT.
 # epubkit
+
+## Things epubkit now sorts out on its own
+
+- **Misnamed files** — a Kindle file saved as `.pdf` (or any mismatch) is recognised from its bytes and handled as what it really is.
+- **Kindle comics** — panel-view conversions (blank pages) and Kindle Comic Creator fixed layout (no viewport) are rebuilt as clean Kobo picture books from their full-size pictures. The fixed-layout flag is checked again before a book is written and put back if any step dropped it.
+- **Comic size** — picture books are recompressed at `convert.comic_quality` (80): each page is kept only if it comes out at least 15% smaller.
+- **Store titles** — "(Detective Gina Harte Book 5)", "- Series 06 (2020)" and "Series 11: Title" become series + number; marketing subtitles ("A totally gripping crime thriller", "A Novel") are dropped; "Kovach, Carla" becomes "Carla Kovach".
+- **Series position** — read from the book's own "Books by …" page (lists are remembered in `series-lists.json` for the author's other books), and as a last resort from the download's name.
+- **Validation fixes** — `<li value>` outside an `<ol>`, `<script src>` to missing files, `<meta refines>` pointing at nothing.
+- **Recap lead** — a series named after a character in the book ("Detective Gina Harte") decides the main character. Recaps written around someone else are listed as *wrong lead* by `epubkit recaps --audit` / `grecaps audit` and redone by the next `epubkit recaps` / `grecaps run` without `--force`.
+- **Retries** — a book that failed and then succeeds no longer shows its old error; failures of files that are gone are not reported again.
+
+`scripts/retitle.py FOLDER [--apply]` applies the title/series clean-up to books an older epubkit already wrote, without touching their text or recaps.
