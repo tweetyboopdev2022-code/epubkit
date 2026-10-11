@@ -30,7 +30,7 @@ from xml.etree import ElementTree as ET
 
 from .library_hint import ADULT, KIDS, TEENS, Suggestion, recommend
 
-RULES_VERSION = 3          # bump when the rules change, so cached answers refresh
+RULES_VERSION = 5          # bump when the rules change, so cached answers refresh
 
 _DC = "{http://purl.org/dc/elements/1.1/}"
 _OPF = "{http://www.idpf.org/2007/opf}"
@@ -50,9 +50,16 @@ def read_book(path: Path) -> dict:
     isbn = next((re.sub(r"[^0-9Xx]", "", i) for i in text("identifier")
                  if re.sub(r"[^0-9Xx]", "", i) and
                  len(re.sub(r"[^0-9Xx]", "", i)) in (10, 13)), None)
+    series = metas.get("calibre:series")
+    if not series:
+        # an EPUB 3 book names its series as a collection instead
+        for m in md.findall(_OPF + "meta"):
+            if m.get("property") == "belongs-to-collection" and (m.text or "").strip():
+                series = m.text.strip()
+                break
     return {"title": (text("title") or [""])[0],
             "authors": [a for a in text("creator") if a],
-            "series": metas.get("calibre:series"),
+            "series": series,
             "subjects": [s for s in text("subject") if s],
             "description": (text("description") or [""])[0] or None,
             "isbn": isbn}
@@ -190,8 +197,15 @@ Meaning:
 - Adult: everything else. "folder" is Fiction or Non-fiction (also for Kids/Teens).
 Rules:
 - Judge by who the book is written FOR, not who appears in it.
-- Reading level matters: grade 2-8 prose and under ~45,000 words points to Kids;
-  grade 7-9 prose to Teens; long, dense prose to Adult.
+- Teens means the book is published or marketed as young adult: YA or teen
+  categories, a YA imprint, teenage main characters, or you know it is YA.
+  Without one of those, the answer is Adult. Plain prose and short length do
+  NOT make a book Teens: a great deal of adult fiction - novellas especially -
+  reads at grade 6-8.
+- Reading level matters most for Kids: grade 2-8 prose under ~45,000 words,
+  with a child's concerns, points to Kids; long, dense prose to Adult.
+- Books of one series share one audience; if you know the series, judge the
+  series.
 - If you do not recognise the book and the evidence is thin, answer "low".
 - "reason" is one short sentence.
 
@@ -285,6 +299,20 @@ def decide(book: dict, ev: dict, st: dict, provider=None) -> Suggestion:
         except Exception as exc:                                        # noqa: BLE001
             print("  model failed for %s: %s" % (book["title"], str(exc)[:100]))
     if guess:
+        # Teens, like Kids, needs something that says so. A model judging by
+        # reading level alone put seven adult Murderbot books in Teens: short,
+        # plain prose is just as common in adult fiction. Only a model that
+        # is sure it knows the book (high confidence) may name Teens on its own,
+        # and even then it is marked for a check.
+        if guess.library == TEENS and guess.confidence != "high":
+            return Suggestion(ADULT, guess.folder or marker.folder, "low",
+                              ["the model guessed Teens, but nothing the book or a catalogue "
+                               "says marks it as young adult, so it stays in Adult; check it"]
+                              + guess.reasons)
+        if guess.library == TEENS:
+            guess.confidence = "medium"
+            guess.reasons.append("no YA label anywhere - the model's knowledge alone")
+            return guess
         if guess.library == ADULT and band == KIDS:
             return Suggestion(KIDS, guess.folder, "low",
                               ["the model said Adult, but the text is short and easy (%s); "
@@ -361,6 +389,7 @@ def classify_library(library: Path, provider=None, cache_path: Path | None = Non
         fresh[p.name] = {"sig": sig, "row": row}
         rows.append(row)
     rows = series_consensus(rows)
+    rows = apply_overrides(rows, load_overrides(library))
     if cache_path:
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -368,6 +397,48 @@ def classify_library(library: Path, provider=None, cache_path: Path | None = Non
         except OSError:
             pass
     return rows
+
+
+def load_overrides(library: Path) -> dict:
+    """{"text": "Adult" | "Teens" | "Kids" | "Adult › Fiction"} from the
+    "library" field of epubkit-overrides.json - the same file that holds
+    metadata fixes - in the library folder or the folder above it."""
+    out: dict = {}
+    for d in (library, library.parent):
+        f = d / "epubkit-overrides.json"
+        try:
+            table = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        for key, fields in (table or {}).items():
+            if isinstance(fields, dict) and isinstance(fields.get("library"), str):
+                out.setdefault(key, fields["library"].strip())
+    return out
+
+
+def apply_overrides(rows: list[dict], overrides: dict) -> list[dict]:
+    """A shelf set by hand beats every rule. The key is matched, without
+    regard to case, against the series, the title and the file name - so one
+    line, "The Murderbot Diaries": {"library": "Adult"}, settles a whole series."""
+    if not overrides:
+        return rows
+    out = []
+    for r in rows:
+        r = dict(r)
+        hay = [str(r.get(k) or "").lower() for k in ("series", "title", "name")]
+        for key, shelf in overrides.items():
+            lib = shelf.split("›")[0].strip().title()
+            if lib not in (KIDS, TEENS, ADULT):
+                continue
+            if any(key.lower() in h for h in hay if h):
+                r["shelf"] = shelf if "›" in shelf else (
+                    lib + (" › " + r["shelf"].split(" › ")[1]
+                           if " › " in r["shelf"] and lib == ADULT else ""))
+                r["confidence"] = "high"
+                r["why"] = "set by hand in epubkit-overrides.json (%s)" % key
+                break
+        out.append(r)
+    return out
 
 
 def series_consensus(rows: list[dict]) -> list[dict]:
@@ -389,7 +460,7 @@ def series_consensus(rows: list[dict]) -> list[dict]:
         votes: dict[str, int] = {}
         for r in group:
             lib = r["shelf"].split(" › ")[0]
-            votes[lib] = votes.get(lib, 0) + (2 if r["confidence"] == "high" else 1)
+            votes[lib] = votes.get(lib, 0) + {"high": 3, "medium": 2}.get(r["confidence"], 1)
         win = max(votes, key=lambda k: (votes[k], order[k]))
         for r in group:
             lib = r["shelf"].split(" › ")[0]
@@ -416,7 +487,23 @@ def section(rows: list[dict]) -> list[str]:
         if not group:
             continue
         L.append("**%s** (%d)" % (lib, len(group)))
+        # a series of three or more on one line: the decision was made for the
+        # series, so it is read as one
+        by_series: dict[str, list[dict]] = {}
         for r in group:
+            if r.get("series"):
+                by_series.setdefault(r["series"], []).append(r)
+        lumped = {s for s, rs in by_series.items() if len(rs) >= 3}
+        for s in sorted(lumped):
+            rs = by_series[s]
+            flag = " *check*" if any(x["confidence"] == "low" or
+                                     (lib != ADULT and x["confidence"] != "high") for x in rs) else ""
+            why = max((x["why"] for x in rs), key=lambda w: ("hand" in w, len(w)))
+            L.append("- %s, %d books — %s (%s)%s" % (
+                s, len(rs), rs[0]["authors"] or "", why, flag))
+        for r in group:
+            if r.get("series") in lumped:
+                continue
             place = r["shelf"].split(" › ")[1] if " › " in r["shelf"] else ""
             bits = [x for x in (place, r["why"]) if x]
             flag = " *check*" if r["confidence"] == "low" or \

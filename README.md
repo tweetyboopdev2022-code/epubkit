@@ -263,6 +263,18 @@ a nuisance and a wrong Kids is a child's Kobo showing an adult book. Suggestions
 that are not clearly settled are marked *check*. It is advice only; nothing is
 moved.
 
+Teens needs the same kind of evidence as Kids. A model that guesses "young
+adult" from short length or plain prose is overruled to Adult (marked *check*):
+plenty of adult fiction, novellas above all, reads that way. Books of one series
+share a shelf, and a series of three or more shows as a single line. To settle a
+book or a whole series by hand, add a `library` to `epubkit-overrides.json` in
+the library folder (or the folder above it); the key is matched against the
+series, the title and the file name:
+
+```json
+{"The Murderbot Diaries": {"library": "Adult"}}
+```
+
 Every book goes through every step. A step that has nothing to do says why in
 the report — "slim: under the threshold (12 books)", "plan_omnibus: too short
 to be a bundle (9 books)" — so a step that quietly does nothing is visible

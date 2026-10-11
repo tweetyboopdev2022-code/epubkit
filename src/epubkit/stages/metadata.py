@@ -112,12 +112,21 @@ class MetadataStage(Stage):
                 current["series"], current["series_index"] = series, idx
                 ctx.note("series: %s #%s, from %s" % (series, idx, how))
             elif not current.get("series"):
+                ctx.note("no series found in the author's lists: %s" % how)
                 series, idx = series_hint.from_filename(Path(str(ctx.record.source)).name,
                                                         current.get("title") or "")
                 if series:
                     current["series"], current["series_index"] = series, idx
                     ctx.note("series: %s #%s, from the file's name - check it"
                              % (series, idx))
+
+        # "Rogue Protocol: The Murderbot Diaries" - the series name stored as
+        # the subtitle. Once the series is known it is the series, not the title.
+        if current.get("series") and current.get("title"):
+            short = series_hint.strip_series_suffix(current["title"], current["series"])
+            if short != current["title"]:
+                ctx.note("series name taken off the end of the title")
+                current["title"] = short
 
         if override:
             current.update(override)        # nothing later may undo a hand fix
@@ -259,8 +268,19 @@ class MetadataStage(Stage):
         target = book.with_name(name + book.suffix if not
                                 book.name.endswith(".kepub.epub")
                                 else name + ".kepub.epub")
-        if target == book or target.exists():
+        if target == book:
             return book
+        if target.exists():
+            # Each book has a work folder to itself, so a file already there
+            # under the new name is left over from an earlier run that was
+            # stopped part way. Keeping the download's name because of it is
+            # how "_OceanofPDF.com_All_Systems_Red_-_Martha_Wells" reached the
+            # library unrenamed.
+            try:
+                target.unlink()
+            except OSError:
+                ctx.note("could not rename: %s is in the way" % target.name)
+                return book
         try:
             book.rename(target)
         except OSError:
