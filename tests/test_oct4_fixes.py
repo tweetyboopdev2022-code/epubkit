@@ -1,5 +1,4 @@
 """Fixes from the 4 October 2026 batch (Murderbot / Bobiverse / 1984)."""
-import io
 import json
 import zipfile
 

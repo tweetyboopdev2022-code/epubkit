@@ -1,8 +1,17 @@
 import zipfile
 from pathlib import Path
 
-from epubkit.shelves import (ADULT, KIDS, TEENS, assess, classify_library, decide,
-                             json_from, lookup, section)
+from epubkit.shelves import (
+    ADULT,
+    KIDS,
+    TEENS,
+    assess,
+    classify_library,
+    decide,
+    json_from,
+    lookup,
+    section,
+)
 
 OPF = """<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>%s</dc:title>
@@ -23,8 +32,13 @@ class Reply:
 
 
 class Model:
-    def __init__(self, t): self.t = t; self.prompts = []
-    def complete(self, prompt, system=None): self.prompts.append(prompt); return Reply(self.t)
+    def __init__(self, t):
+        self.t = t
+        self.prompts = []
+
+    def complete(self, prompt, system=None):
+        self.prompts.append(prompt)
+        return Reply(self.t)
 
 
 NOWEB = lambda url: {}                                        # noqa: E731
@@ -177,6 +191,7 @@ def test_a_sure_model_may_name_teens_but_only_at_medium():
 
 def test_overrides_set_a_whole_series_by_hand(tmp_path):
     import json as _json
+
     from epubkit.shelves import apply_overrides, load_overrides
     (tmp_path / "epubkit-overrides.json").write_text(_json.dumps(
         {"The Murderbot Diaries": {"library": "Adult"}, "x.epub": {"title": "no library here"}}))
@@ -257,6 +272,7 @@ def test_a_rerun_finds_sorted_books_from_the_cache_and_leaves_them(tmp_path):
 
 def test_an_override_moves_a_sorted_book_on_the_next_run(tmp_path):
     import json as _json
+
     from epubkit.shelves import sort_library
     cache = _lib(tmp_path)
     sort_library(tmp_path, classify_library(tmp_path, None, cache, False))
@@ -269,6 +285,7 @@ def test_an_override_moves_a_sorted_book_on_the_next_run(tmp_path):
 def test_a_book_made_again_replaces_its_old_copy_in_another_folder(tmp_path):
     import os
     import time
+
     from epubkit.shelves import sort_library
     cache = _lib(tmp_path)
     sort_library(tmp_path, classify_library(tmp_path, None, cache, False))
