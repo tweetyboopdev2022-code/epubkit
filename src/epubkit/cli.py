@@ -36,8 +36,9 @@ concurrency = 2                  # chapters summarised at once
 [metadata]
 sources = ["openlibrary", "googlebooks"]
 use_ai_fallback = true           # model only fills what catalogues could not
-suggest_shelves = true          # last step: Kids / Teens / Adult for every book, in REPORT.md
+suggest_shelves = true          # last step: Kids / Teens / Adult / Cookbooks for every book, in REPORT.md
 shelf_lookup = true             # ...checked against Open Library / Google Books
+sort_into_libraries = true      # ...then move each into Kids/ Teens/ Adult/ Cookbooks/ or _Review/
 overwrite_existing = false       # never overwrite what the book already states
 # Full series name and full title, never abbreviated, however long it runs.
 filename_template   = "{series} {index:02d} - {title} - {authors}"
@@ -162,7 +163,8 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("-y", "--yes", action="store_true",
                    help="do not ask before installing")
 
-    sh = sub.add_parser("shelves", help="re-suggest Kids / Teens / Adult for finished books")
+    sh = sub.add_parser("shelves", help="re-suggest Kids / Teens / Adult / Cookbooks for finished books "
+                                            "and sort them into those folders")
     sh.add_argument("library", type=Path, nargs="?",
                     help="the folder of finished books (default: the output folder)")
     sh.add_argument("-c", "--config", type=Path)
@@ -277,7 +279,8 @@ def main(argv: list[str] | None = None) -> int:
             print("no model available (%s); using subjects only" % str(exc)[:80])
             provider = None
         return run_shelves(Path(lib).expanduser(), provider,
-                           lookup_online=cfg.metadata.shelf_lookup and not args.offline)
+                           lookup_online=cfg.metadata.shelf_lookup and not args.offline,
+                           sort=cfg.metadata.sort_into_libraries)
 
     if args.command == "config":
         return _cmd_config(args, cfg)

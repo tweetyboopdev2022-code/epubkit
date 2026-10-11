@@ -21,6 +21,7 @@ the sources agree, because a wrong Kids shelf is the mistake that matters.
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -28,9 +29,17 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from .library_hint import ADULT, KIDS, TEENS, Suggestion, recommend
+from .library_hint import (
+    ADULT,
+    COOKBOOKS,
+    KIDS,
+    LIBRARIES,
+    TEENS,
+    Suggestion,
+    recommend,
+)
 
-RULES_VERSION = 3          # bump when the rules change, so cached answers refresh
+RULES_VERSION = 6          # bump when the rules change, so cached answers refresh
 
 _DC = "{http://purl.org/dc/elements/1.1/}"
 _OPF = "{http://www.idpf.org/2007/opf}"
@@ -50,9 +59,16 @@ def read_book(path: Path) -> dict:
     isbn = next((re.sub(r"[^0-9Xx]", "", i) for i in text("identifier")
                  if re.sub(r"[^0-9Xx]", "", i) and
                  len(re.sub(r"[^0-9Xx]", "", i)) in (10, 13)), None)
+    series = metas.get("calibre:series")
+    if not series:
+        # an EPUB 3 book names its series as a collection instead
+        for m in md.findall(_OPF + "meta"):
+            if m.get("property") == "belongs-to-collection" and (m.text or "").strip():
+                series = m.text.strip()
+                break
     return {"title": (text("title") or [""])[0],
             "authors": [a for a in text("creator") if a],
-            "series": metas.get("calibre:series"),
+            "series": series,
             "subjects": [s for s in text("subject") if s],
             "description": (text("description") or [""])[0] or None,
             "isbn": isbn}
@@ -180,18 +196,27 @@ def lookup(book: dict, fetch=_get) -> dict:
 PROMPT = """Decide which library shelf this book belongs on. Use everything below.
 
 Answer ONLY with JSON in exactly this shape:
-{{"library": "Kids" | "Teens" | "Adult", "folder": "Fiction" | "Non-fiction" | "",
+{{"library": "Kids" | "Teens" | "Adult" | "Cookbooks", "folder": "Fiction" | "Non-fiction" | "",
   "confidence": "high" | "medium" | "low", "reason": ""}}
 
 Meaning:
 - Kids: written for children up to about 12 (picture books, early readers,
   chapter books, middle grade).
 - Teens: young adult, written for readers about 13-17.
+- Cookbooks: a cookbook or recipe collection, for any age. A novel with
+  recipes in it is not a cookbook.
 - Adult: everything else. "folder" is Fiction or Non-fiction (also for Kids/Teens).
 Rules:
 - Judge by who the book is written FOR, not who appears in it.
-- Reading level matters: grade 2-8 prose and under ~45,000 words points to Kids;
-  grade 7-9 prose to Teens; long, dense prose to Adult.
+- Teens means the book is published or marketed as young adult: YA or teen
+  categories, a YA imprint, teenage main characters, or you know it is YA.
+  Without one of those, the answer is Adult. Plain prose and short length do
+  NOT make a book Teens: a great deal of adult fiction - novellas especially -
+  reads at grade 6-8.
+- Reading level matters most for Kids: grade 2-8 prose under ~45,000 words,
+  with a child's concerns, points to Kids; long, dense prose to Adult.
+- Books of one series share one audience; if you know the series, judge the
+  series.
 - If you do not recognise the book and the evidence is thin, answer "low".
 - "reason" is one short sentence.
 
@@ -220,7 +245,7 @@ def _ask(provider, book, ev, st) -> Suggestion | None:
         sample=st["sample"] or "none")
     data = json_from(provider.complete(prompt, system=_SYSTEM).text)
     lib = str(data.get("library") or "").strip().title()
-    if lib not in (KIDS, TEENS, ADULT):
+    if lib not in LIBRARIES:
         return None
     folder = {"non-fiction": "Non-fiction", "nonfiction": "Non-fiction",
               "fiction": "Fiction"}.get(str(data.get("folder") or "").strip().lower(), "")
@@ -284,7 +309,28 @@ def decide(book: dict, ev: dict, st: dict, provider=None) -> Suggestion:
             guess = _ask(provider, book, ev, st)
         except Exception as exc:                                        # noqa: BLE001
             print("  model failed for %s: %s" % (book["title"], str(exc)[:100]))
+    if guess and guess.library == COOKBOOKS:
+        # a cookbook is told by what it is, not by its reading level; but with
+        # no subject heading saying so it is the model's word alone
+        guess.folder = ""
+        if guess.confidence == "high":
+            guess.confidence = "medium"
+        return guess
     if guess:
+        # Teens, like Kids, needs something that says so. A model judging by
+        # reading level alone put seven adult Murderbot books in Teens: short,
+        # plain prose is just as common in adult fiction. Only a model that
+        # is sure it knows the book (high confidence) may name Teens on its own,
+        # and even then it is marked for a check.
+        if guess.library == TEENS and guess.confidence != "high":
+            return Suggestion(ADULT, guess.folder or marker.folder, "low",
+                              ["the model guessed Teens, but nothing the book or a catalogue "
+                               "says marks it as young adult, so it stays in Adult; check it"]
+                              + guess.reasons)
+        if guess.library == TEENS:
+            guess.confidence = "medium"
+            guess.reasons.append("no YA label anywhere - the model's knowledge alone")
+            return guess
         if guess.library == ADULT and band == KIDS:
             return Suggestion(KIDS, guess.folder, "low",
                               ["the model said Adult, but the text is short and easy (%s); "
@@ -331,6 +377,35 @@ def _sig(p: Path, provider, lookup_online: bool) -> str:
                                getattr(getattr(provider, "cfg", None), "model", "") or "")
 
 
+REVIEW = "_Review"
+#: the folders of the library a book is sorted into, named as in Grimmory
+FOLDERS = LIBRARIES + (REVIEW,)
+
+
+def needs_check(row: dict) -> bool:
+    """Not settled enough to put on a shelf unseen: a low guess anywhere, and
+    anything short of high for the two younger libraries."""
+    lib = row["shelf"].split(" › ")[0]
+    return row["confidence"] == "low" or (lib in (KIDS, TEENS) and row["confidence"] != "high")
+
+
+def _found(library: Path) -> dict[str, Path]:
+    """Every finished book, by file name: at the top of the library (just
+    made) or in one of its shelf folders (sorted on an earlier run). If one
+    name is in two places, the newer copy is the book."""
+    out: dict[str, Path] = {}
+    for d in (library,) + tuple(library / f for f in FOLDERS):
+        if not d.is_dir():
+            continue
+        for p in d.glob("*.epub"):
+            if not p.is_file():
+                continue
+            old = out.get(p.name)
+            if old is None or p.stat().st_mtime > old.stat().st_mtime:
+                out[p.name] = p
+    return out
+
+
 def classify_library(library: Path, provider=None, cache_path: Path | None = None,
                      lookup_online: bool = True, refresh: bool = False,
                      log=lambda *_: None, fetch=_get) -> list[dict]:
@@ -342,11 +417,13 @@ def classify_library(library: Path, provider=None, cache_path: Path | None = Non
         except (OSError, ValueError):
             cache = {}
     rows, fresh = [], {}
-    for p in sorted(x for x in library.glob("*.epub") if x.is_file()):
+    found = _found(library)
+    for name in sorted(found):
+        p = found[name]
         sig = _sig(p, provider, lookup_online)
         hit = cache.get(p.name)
         if hit and hit.get("sig") == sig:
-            row = hit["row"]
+            row = dict(hit["row"])
         else:
             try:
                 book, s = assess(p, provider, lookup_online, fetch)
@@ -359,8 +436,9 @@ def classify_library(library: Path, provider=None, cache_path: Path | None = Non
                    "confidence": s.confidence, "why": "; ".join(s.reasons)}
             log("%-18s %-6s %s" % (s.label(), s.confidence, book["title"][:50]))
         fresh[p.name] = {"sig": sig, "row": row}
-        rows.append(row)
+        rows.append(dict(row, path=str(p.relative_to(library))))
     rows = series_consensus(rows)
+    rows = apply_overrides(rows, load_overrides(library))
     if cache_path:
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -370,6 +448,48 @@ def classify_library(library: Path, provider=None, cache_path: Path | None = Non
     return rows
 
 
+def load_overrides(library: Path) -> dict:
+    """{"text": "Adult" | "Teens" | "Kids" | "Cookbooks" | "Adult › Fiction"} from the
+    "library" field of epubkit-overrides.json - the same file that holds
+    metadata fixes - in the library folder or the folder above it."""
+    out: dict = {}
+    for d in (library, library.parent):
+        f = d / "epubkit-overrides.json"
+        try:
+            table = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        for key, fields in (table or {}).items():
+            if isinstance(fields, dict) and isinstance(fields.get("library"), str):
+                out.setdefault(key, fields["library"].strip())
+    return out
+
+
+def apply_overrides(rows: list[dict], overrides: dict) -> list[dict]:
+    """A shelf set by hand beats every rule. The key is matched, without
+    regard to case, against the series, the title and the file name - so one
+    line, "The Murderbot Diaries": {"library": "Adult"}, settles a whole series."""
+    if not overrides:
+        return rows
+    out = []
+    for r in rows:
+        r = dict(r)
+        hay = [str(r.get(k) or "").lower() for k in ("series", "title", "name")]
+        for key, shelf in overrides.items():
+            lib = shelf.split("›")[0].strip().title()
+            if lib not in LIBRARIES:
+                continue
+            if any(key.lower() in h for h in hay if h):
+                r["shelf"] = shelf if "›" in shelf else (
+                    lib + (" › " + r["shelf"].split(" › ")[1]
+                           if " › " in r["shelf"] and lib == ADULT else ""))
+                r["confidence"] = "high"
+                r["why"] = "set by hand in epubkit-overrides.json (%s)" % key
+                break
+        out.append(r)
+    return out
+
+
 def series_consensus(rows: list[dict]) -> list[dict]:
     """Books of one series share an audience, so they share a shelf.
 
@@ -377,7 +497,7 @@ def series_consensus(rows: list[dict]) -> list[dict]:
     older shelf). A book moved this way is marked for a check, since it was
     settled by its siblings rather than by its own evidence.
     """
-    order = {KIDS: 0, TEENS: 1, ADULT: 2}
+    order = {KIDS: 0, TEENS: 1, ADULT: 2, COOKBOOKS: 3}
     by: dict[str, list[dict]] = {}
     for r in rows:
         if r.get("series"):
@@ -389,7 +509,7 @@ def series_consensus(rows: list[dict]) -> list[dict]:
         votes: dict[str, int] = {}
         for r in group:
             lib = r["shelf"].split(" › ")[0]
-            votes[lib] = votes.get(lib, 0) + (2 if r["confidence"] == "high" else 1)
+            votes[lib] = votes.get(lib, 0) + {"high": 3, "medium": 2}.get(r["confidence"], 1)
         win = max(votes, key=lambda k: (votes[k], order[k]))
         for r in group:
             lib = r["shelf"].split(" › ")[0]
@@ -402,25 +522,45 @@ def series_consensus(rows: list[dict]) -> list[dict]:
     return [out[r["name"]] for r in rows]
 
 
-def section(rows: list[dict]) -> list[str]:
+def section(rows: list[dict], sorted_into: bool | None = None) -> list[str]:
     """The 'Suggested libraries' part of REPORT.md."""
     if not rows:
         return []
+    if sorted_into is None:
+        sorted_into = any("/" in r.get("path", "") for r in rows)
     L = ["## Suggested libraries", "",
          "Decided from the book's own subjects, catalogue records, how long and "
          "how hard the text is, and a model that sees all of that. Anything "
          "marked *check* is a guess or the sources disagreed - look before "
          "adding it, above all before anything goes into Kids.", ""]
-    for lib in (KIDS, TEENS, ADULT):
+    if sorted_into:
+        L[-1:-1] = ["Each book has been moved into the folder of its library. Those "
+                    "marked *check* are in %s instead: look at each, then move it "
+                    "by hand or settle it in epubkit-overrides.json." % REVIEW, ""]
+    for lib in LIBRARIES:
         group = [r for r in rows if r["shelf"].split(" › ")[0] == lib]
         if not group:
             continue
         L.append("**%s** (%d)" % (lib, len(group)))
+        # a series of three or more on one line: the decision was made for the
+        # series, so it is read as one
+        by_series: dict[str, list[dict]] = {}
         for r in group:
+            if r.get("series"):
+                by_series.setdefault(r["series"], []).append(r)
+        lumped = {s for s, rs in by_series.items() if len(rs) >= 3}
+        for s in sorted(lumped):
+            rs = by_series[s]
+            flag = " *check*" if any(needs_check(x) for x in rs) else ""
+            why = max((x["why"] for x in rs), key=lambda w: ("hand" in w, len(w)))
+            L.append("- %s, %d books — %s (%s)%s" % (
+                s, len(rs), rs[0]["authors"] or "", why, flag))
+        for r in group:
+            if r.get("series") in lumped:
+                continue
             place = r["shelf"].split(" › ")[1] if " › " in r["shelf"] else ""
             bits = [x for x in (place, r["why"]) if x]
-            flag = " *check*" if r["confidence"] == "low" or \
-                (lib != ADULT and r["confidence"] != "high") else ""
+            flag = " *check*" if needs_check(r) else ""
             L.append("- %s%s%s%s" % (r["title"] or r["name"],
                                      " — %s" % r["authors"] if r["authors"] else "",
                                      " (%s)" % "; ".join(bits) if bits else "", flag))
@@ -428,14 +568,50 @@ def section(rows: list[dict]) -> list[str]:
     return L
 
 
+def destination(row: dict) -> str:
+    """The folder a book goes to: its library, or _Review if not settled."""
+    lib = row["shelf"].split(" › ")[0]
+    return REVIEW if lib not in LIBRARIES or needs_check(row) else lib
+
+
+def sort_library(library: Path, rows: list[dict], log=lambda *_: None) -> list[dict]:
+    """Move every book into the folder of its library, ready to upload to the
+    Grimmory library of the same name. The file name is never changed. A book
+    already in the right folder stays; one whose shelf changed (a new
+    override, a re-run) moves. An older copy of the same book left in another
+    folder - a book processed again lands at the top - is removed, so no book
+    is ever in two libraries at once."""
+    out = []
+    for r in rows:
+        r = dict(r)
+        src = library / r.get("path", r["name"])
+        dest = library / destination(r) / r["name"]
+        try:
+            if src != dest:
+                dest.parent.mkdir(exist_ok=True)
+                os.replace(src, dest)
+                log("%-10s %s" % (destination(r), r["name"]))
+            for d in (library,) + tuple(library / f for f in FOLDERS):
+                stale = d / r["name"]
+                if stale != dest and stale.is_file():
+                    stale.unlink()
+            r["path"] = str(dest.relative_to(library))
+        except OSError as exc:
+            log("could not move %s: %s" % (r["name"], str(exc)[:80]))
+        out.append(r)
+    return out
+
+
 def run(library: Path, provider, log=print, refresh: bool = True,
-        lookup_online: bool = True) -> int:
+        lookup_online: bool = True, sort: bool = True) -> int:
     """`epubkit shelves`: the same step, on demand, plus a SHELVES.md."""
     rows = classify_library(library, provider, library / ".epubkit-work" / "shelves-cache.json",
                             lookup_online, refresh, log)
     if not rows:
         log("no finished books in %s" % library)
         return 1
-    (library / "SHELVES.md").write_text("\n".join(section(rows)))
+    if sort:
+        rows = sort_library(library, rows, log)
+    (library / "SHELVES.md").write_text("\n".join(section(rows, sorted_into=sort)))
     log("\nwritten to %s" % (library / "SHELVES.md"))
     return 0

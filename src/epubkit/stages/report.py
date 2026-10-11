@@ -34,15 +34,21 @@ def shelf_checks(out_dir: Path) -> list[str]:
     """
     import subprocess
     import sys
-    try:
-        r = subprocess.run(
-            [sys.executable, "-m", "epubkit.tools.check_art",
-             str(out_dir), "--quiet"],
-            capture_output=True, text=True, timeout=600)
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return [ln.strip() for ln in (r.stdout or "").splitlines()
-            if "artwork is missing" in ln]
+
+    from ..shelves import FOLDERS
+    found = []
+    # once the books are sorted, each library folder is its own shelf
+    for d in [out_dir] + [out_dir / f for f in FOLDERS if (out_dir / f).is_dir()]:
+        try:
+            r = subprocess.run(
+                [sys.executable, "-m", "epubkit.tools.check_art",
+                 str(d), "--quiet"],
+                capture_output=True, text=True, timeout=600)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        found += [ln.strip() for ln in (r.stdout or "").splitlines()
+                  if "artwork is missing" in ln]
+    return found
 
 
 def write(state: RunState, out_dir: Path, elapsed: float, shelves=None) -> Path:

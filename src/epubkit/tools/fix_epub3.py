@@ -24,7 +24,7 @@ It never touches the text, the spine order, the images, or the koboSpans.
 
     python3 fix_epub3.py <book.epub|folder> [--out DIR] [--inplace] [--json F]
 """
-import argparse, copy, datetime, os, re, shutil, sys, zipfile
+import argparse, copy, datetime, os, posixpath, re, shutil, sys, zipfile
 from lxml import etree
 
 OPF_NS = "http://www.idpf.org/2007/opf"
@@ -646,6 +646,262 @@ PHRASING_ONLY_BLOCKS = (b"p", b"h1", b"h2", b"h3", b"h4", b"h5", b"h6")
 _TAG_SCAN = re.compile(rb"<(/?)([A-Za-z][-\w:.]*)([^>]*?)(/?)>")
 
 
+#: Every element HTML5 defines. A tag outside this list, with no namespace
+#: prefix, is something a converter invented - Exit Strategy wraps every one
+#: of its 2,600 sentences in <sentence>, and each is an RSC-005.
+HTML5_ELEMENTS = frozenset(b"""a abbr address area article aside audio b base
+bdi bdo blockquote body br button canvas caption cite code col colgroup data
+datalist dd del details dfn dialog div dl dt em embed fieldset figcaption
+figure footer form h1 h2 h3 h4 h5 h6 head header hgroup hr html i iframe img
+input ins kbd label legend li link main map mark menu meta meter nav noscript
+object ol optgroup option output p param picture pre progress q rp rt ruby s
+samp script search section select slot small source span strong style sub
+summary sup svg math table tbody td template textarea tfoot th thead time
+title tr track u ul var video wbr""".split())
+#: Invented elements seen in real books. These go even from a page that holds
+#: SVG or MathML, where the general rule stands back (their children have
+#: names of their own that are not HTML).
+KNOWN_JUNK_ELEMENTS = frozenset({b"sentence"})
+
+
+def unwrap_unknown_elements(data):
+    """Drop the tags of elements HTML does not have, keeping what they hold.
+
+    Only the tags go - every word, image and koboSpan between them stays
+    where it was. Prefixed elements (epub:switch, svg:svg, m:math) are left
+    alone, and on a page with SVG or MathML only the known junk is removed.
+    """
+    embedded = re.search(rb"<(\w+:)?(svg|math)\b", data, re.I) is not None
+    names = set()
+
+    def sub(mo):
+        name = mo.group(2)
+        low = name.lower()
+        if b":" in name or low in HTML5_ELEMENTS:
+            return mo.group(0)
+        if embedded and low not in KNOWN_JUNK_ELEMENTS:
+            return mo.group(0)
+        names.add(low.decode("ascii", "ignore"))
+        return b""
+
+    out = _TAG_SCAN.sub(sub, data)
+    return out, sorted(names)
+
+
+#: Elements that never have a closing tag.
+VOID_ELEMENTS = frozenset(b"""area base br col embed hr img input link meta
+param source track wbr""".split())
+
+
+def wrap_list_children(data):
+    """Put anything sitting directly inside <ol>/<ul> into an <li>.
+
+    Calibre leaves its page-break markers - an empty <div id="calibre_pb_18">
+    - straight inside the list, which no EPUB version allows (RSC-005, 59 of
+    them in We Are Legion). The wrapper hides its own bullet, so the page
+    looks exactly as it did, and the marker's id survives for anything that
+    links to it.
+    """
+    stack = []          # [name, wrapped-until-close-of-this-depth]
+    edits = []          # (position, bytes to insert)
+    n = 0
+    for mo in _TAG_SCAN.finditer(data):
+        closing, name, _attrs, selfclose = mo.groups()
+        low = name.lower()
+        if closing:
+            for i in range(len(stack) - 1, -1, -1):
+                if stack[i][0] == low:
+                    frame = stack[i]
+                    del stack[i:]
+                    if frame[1]:
+                        edits.append((mo.end(), b"</li>"))
+                    break
+            continue
+        parent = stack[-1][0] if stack else None
+        needs = parent in (b"ol", b"ul") and low not in (b"li", b"script", b"template")
+        if needs:
+            edits.append((mo.start(), b'<li style="list-style-type:none">'))
+            n += 1
+        if selfclose or low in VOID_ELEMENTS:
+            if needs:
+                edits.append((mo.end(), b"</li>"))
+            continue
+        stack.append([low, needs])
+    if not edits:
+        return data, 0
+    out, last = [], 0
+    for pos, ins in sorted(edits, key=lambda e: e[0]):
+        out.append(data[last:pos])
+        out.append(ins)
+        last = pos
+    out.append(data[last:])
+    return b"".join(out), n
+
+
+#: "data:image/.jpg;base64,..." - a media type with the file extension where
+#: the subtype belongs. EPUBCheck reads it as an unknown foreign resource
+#: (RSC-032), and a reader may not draw it.
+BAD_DATA_URI_RE = re.compile(rb"data:image/\.(jpe?g|png|gif|webp|svg)\b", re.I)
+_DATA_SUBTYPE = {b"jpg": b"jpeg", b"jpeg": b"jpeg", b"png": b"png",
+                 b"gif": b"gif", b"webp": b"webp", b"svg": b"svg+xml"}
+
+
+def fix_data_uri_types(data):
+    n = [0]
+
+    def sub(mo):
+        n[0] += 1
+        return b"data:image/" + _DATA_SUBTYPE[mo.group(1).lower()]
+
+    return BAD_DATA_URI_RE.sub(sub, data), n[0]
+
+
+#: data-* attribute names must be lowercase in XHTML ("data-AmznRemoved" is
+#: HTM-061). The value is kept; only the name is lowered.
+DATA_ATTR_UPPER_RE = re.compile(rb"(\sdata-)([-\w.]*[A-Z][-\w.]*)(\s*=)")
+
+
+def lower_data_attrs(data):
+    n = [0]
+
+    def sub(mo):
+        if not mo.group(0):
+            return mo.group(0)
+        n[0] += 1
+        return mo.group(1) + mo.group(2).lower() + mo.group(3)
+
+    # only inside tags, never in the text of the page
+    def in_tag(mo):
+        return DATA_ATTR_UPPER_RE.sub(sub, mo.group(0))
+
+    return re.sub(rb"<[A-Za-z][^>]*>", in_tag, data), n[0]
+
+
+#: A <nav> with no list in it ("<nav epub:type="toc"></nav>") is RSC-005 -
+#: the list is required. Exit Strategy ships one as its table of contents.
+EMPTY_NAV_RE = re.compile(rb"<nav\b[^>]*>(?:(?!<ol\b|</nav>).)*</nav>", re.I | re.S)
+
+
+def drop_empty_navs(data):
+    out, n = EMPTY_NAV_RE.subn(b"", data)
+    return out, n
+
+
+def nav_is_empty(data):
+    """True when the document's toc nav has no link in it at all."""
+    m = re.search(rb'<nav\b[^>]*epub:type\s*=\s*["\'][^"\']*\btoc\b[^"\']*["\'][^>]*>(.*?)</nav>',
+                  data, re.I | re.S)
+    if not m:
+        return True
+    return re.search(rb"<a\b[^>]*\shref\s*=", m.group(1), re.I) is None
+
+
+def fix_nav_fragments(data, ids_for):
+    """Point an existing nav only at fragments that exist.
+
+    `ids_for(href)` gives the ids in the document an href (relative to the nav)
+    names, or None when that document is not known. A page-list entry whose
+    page marker is gone is dropped - Network Effect lists 345 page numbers
+    whose markers were stripped from the text - and a page list left with no
+    entries goes too. Elsewhere only the fragment is dropped, so the entry
+    still opens the right chapter. Returns (data, entries dropped, fragments
+    dropped).
+    """
+    dropped, stripped = [0], [0]
+
+    def dangling(href):
+        base, _, frag = href.partition("#")
+        if not frag or "://" in href:
+            return False
+        ids = ids_for(base) if base else None
+        return ids is not None and frag not in ids
+
+    def page_list(mo):
+        block = mo.group(0)
+
+        def li(m2):
+            h = re.search(rb'\shref\s*=\s*"([^"]*)"', m2.group(0))
+            if h and dangling(h.group(1).decode("utf-8", "ignore")):
+                dropped[0] += 1
+                return b""
+            return m2.group(0)
+
+        block = re.sub(rb"<li\b[^>]*>.*?</li>\s*", li, block, flags=re.S | re.I)
+        if not re.search(rb"<li\b", block, re.I):
+            return b""
+        return block
+
+    data = re.sub(rb'<nav\b[^>]*epub:type\s*=\s*["\'][^"\']*\bpage-list\b[^"\']*["\'][^>]*>.*?</nav>',
+                  page_list, data, flags=re.S | re.I)
+
+    def href(mo):
+        h = mo.group(2).decode("utf-8", "ignore")
+        if dangling(h):
+            stripped[0] += 1
+            return mo.group(1) + h.partition("#")[0].encode("utf-8") + mo.group(3)
+        return mo.group(0)
+
+    data = re.sub(rb'(<a\b[^>]*?\shref\s*=\s*")([^"]*)(")', href, data, flags=re.I)
+    return data, dropped[0], stripped[0]
+
+
+#: Characters that cannot appear in a URL path. A manifest href carrying one
+#: is RSC-020 ("content/Orwell - 1984 - 0451524934_split_0.html").
+UNSAFE_NAME_RE = re.compile(r"[\s\[\]{}|\\^`<>\"]")
+_RENAMABLE_RE = re.compile(r"\.(x?html?|xhtm|css|ncx|xml|smil)$", re.I)
+
+
+def rename_unsafe_files(raw, names):
+    """Give files whose names cannot be URLs a name that can.
+
+    Only documents, stylesheets and the like are renamed, never images (the
+    content check after this rewrite compares images by name) and never the
+    package's own fixed files. Every reference in every text file - written
+    either plainly or percent-encoded - follows the rename. Returns
+    (raw, names, count).
+    """
+    from urllib.parse import quote
+    mapping = {}
+    for n in names:
+        if n in ("mimetype",) or n.startswith("META-INF/"):
+            continue
+        base = posixpath.basename(n)
+        if not UNSAFE_NAME_RE.search(base) or not _RENAMABLE_RE.search(base):
+            continue
+        new_base = re.sub(r"_+", "_", UNSAFE_NAME_RE.sub("_", base))
+        new = posixpath.join(posixpath.dirname(n), new_base)
+        while new in raw or new in mapping.values():
+            stem, ext = posixpath.splitext(new)
+            new = stem + "_" + ext
+        mapping[n] = new
+    if not mapping:
+        return raw, names, 0
+    swaps = []
+    for old, new in mapping.items():
+        ob, nb = posixpath.basename(old), posixpath.basename(new)
+        for form in {ob, quote(ob)}:
+            swaps.append((form.encode("utf-8"), nb.encode("utf-8")))
+    swaps.sort(key=lambda s: -len(s[0]))
+    out = {}
+    for n, d in raw.items():
+        key = mapping.get(n, n)
+        if n != "mimetype" and (_RENAMABLE_RE.search(n) or n.endswith(".opf")):
+            for a, b in swaps:
+                if a in d:
+                    d = d.replace(a, b)
+        out[key] = d
+    return out, [mapping.get(n, n) for n in names], len(mapping)
+
+
+def drop_css_direction(data):
+    """`direction` and `unicode-bidi` may not appear in an EPUB stylesheet
+    (CSS-001; 1984 had 51). Writing direction belongs to the dir attribute,
+    which a book that needs it carries anyway."""
+    out, n = re.subn(rb"(?<=[{;])\s*(?:direction|unicode-bidi)\s*:[^;}]*;?", b" ", data,
+                     flags=re.I)
+    return out, n
+
+
 def unwrap_inline_around_block(data):
     """Remove an inline wrapper that has a block element inside it.
 
@@ -731,6 +987,19 @@ def fix_content(data, book_title=None):
     data, unwrapped = unwrap_inline_around_block(data)
     if unwrapped:
         notes.append("block-in-inline")
+
+    data, invented = unwrap_unknown_elements(data)
+    if invented:
+        notes.append("invented-tags(%s)" % ",".join(invented[:3]))
+    data, k = wrap_list_children(data)
+    if k:
+        notes.append("list-children(%d)" % k)
+    data, k = fix_data_uri_types(data)
+    if k:
+        notes.append("data-uri-types(%d)" % k)
+    data, k = lower_data_attrs(data)
+    if k:
+        notes.append("data-attr-case(%d)" % k)
 
     # named entities must go numeric BEFORE the DTD-bearing doctype is dropped
     nd = numericise_entities(data)
@@ -1057,7 +1326,10 @@ def drop_dead_links(data, exists):
 
 PROP_SCAN = (
     ("svg", re.compile(rb"<(\w+:)?svg\b", re.I)),
-    ("scripted", re.compile(rb"<script\b|\son[a-z]+\s*=", re.I)),
+    # an event attribute only counts inside a tag: prose like "(Unidentified
+    # One = Target One)" matched the old pattern and declared Network
+    # Effect's chapter 4 scripted (OPF-015)
+    ("scripted", re.compile(rb"<script\b|<[A-Za-z][^>]*\son[a-z]+\s*=", re.I)),
     ("mathml", re.compile(rb"<(\w+:)?math\b", re.I)),
 )
 
@@ -1077,13 +1349,22 @@ def fix_book(src, dst):
     opf_dir = os.path.dirname(opf_path)
 
     def rel(n):
-        """path of n relative to the OPF directory, as the manifest spells it"""
-        if opf_dir and n.startswith(opf_dir + "/"):
+        """path of n relative to the OPF directory, as the manifest spells it.
+
+        A file outside that directory keeps its "../": Kobo store copies put
+        js/kobo.js at the root of the zip beside OEBPS/, and the manifest
+        names it "../js/kobo.js". Dropping the "../" made it look undeclared,
+        and declaring "js/kobo.js" pointed at a file that is not there (RSC-001).
+        """
+        if not opf_dir:
+            return n
+        if n.startswith(opf_dir + "/"):
             return n[len(opf_dir) + 1:]
-        return n
+        return posixpath.relpath(n, opf_dir)
 
     raw = {n: zin.read(n) for n in names}
     zin.close()
+    raw, names, n_renamed = rename_unsafe_files(raw, names)
 
     # Which entries are content documents is decided by the manifest, not by
     # the filename: Calibre leaves spine documents with names like
@@ -1216,6 +1497,9 @@ def fix_book(src, dst):
             return os.path.normpath(os.path.join(_cdir, base)) in raw
 
         d2, k = clean_css(raw[n], cexists)
+        d2, kdir = drop_css_direction(d2)
+        if kdir:
+            notes.add("css-direction(%d)" % kdir)
         if d2 != raw[n]:
             fixed_css[n] = d2
             ndead += k
@@ -1244,14 +1528,36 @@ def fix_book(src, dst):
             if real and real != it.get("media-type"):
                 it.set("media-type", real)
                 notes.add("media-type")
+    if n_renamed:
+        notes.add("renamed-files(%d)" % n_renamed)
+
     # does a nav already exist?
     existing_nav = None
     for it in opf_root.iter(OPF + "item"):
         if "nav" in (it.get("properties") or "").split():
             existing_nav = it.get("href")
+            existing_item = it
     if existing_nav:
-        nav_href = existing_nav
-        nav_name = None
+        full = (opf_dir + "/" + existing_nav) if opf_dir else existing_nav
+        doc = fixed_content.get(full) or raw.get(full) or b""
+        if nav_is_empty(doc):
+            # A declared nav with no links in it (Exit Strategy's toc.xhtml is
+            # two empty <nav> elements). The NCX still knows the chapters, so
+            # a real nav is built from it and the empty one stops being the
+            # nav - it stays in the book as an ordinary page, minus the empty
+            # <nav> elements that make it invalid.
+            props = set((existing_item.get("properties") or "").split()) - {"nav", ""}
+            if props:
+                existing_item.set("properties", " ".join(sorted(props)))
+            else:
+                del existing_item.attrib["properties"]
+            if full in fixed_content:
+                fixed_content[full], _k = drop_empty_navs(fixed_content[full])
+            notes.add("empty-nav-replaced")
+            existing_nav = None
+        else:
+            nav_href = existing_nav
+            nav_name = None
 
     uid_value, changed = fix_opf(
         opf_root, uid_hint=os.path.basename(src),
@@ -1304,6 +1610,27 @@ def fix_book(src, dst):
             txt = re.sub(rb"\s+", b" ", t.group(1)).strip()
             if txt:
                 spine_titles[h] = txt.decode("utf-8", "ignore")
+
+    if existing_nav:
+        # an existing nav is kept, but only pointing at ids that exist
+        # (RSC-012). Ids are read from every document, not just the spine.
+        nav_full = (opf_dir + "/" + existing_nav) if opf_dir else existing_nav
+        ids_by_full = {}
+
+        def ids_for(href, _ndir=os.path.dirname(nav_full)):
+            from urllib.parse import unquote
+            full = os.path.normpath(os.path.join(_ndir, unquote(href)))
+            if full not in ids_by_full:
+                d = fixed_content.get(full) or raw.get(full)
+                ids_by_full[full] = None if d is None else {
+                    m.group(1).decode("utf-8", "ignore") for m in ID_RE.finditer(d)}
+            return ids_by_full[full]
+
+        if nav_full in fixed_content:
+            d2, k1, k2 = fix_nav_fragments(fixed_content[nav_full], ids_for)
+            if k1 or k2:
+                fixed_content[nav_full] = d2
+                notes.add("nav-fragments(%d)" % (k1 + k2))
 
     if nav_name:
         nav_bytes = nav_from_ncx(raw.get(ncx_name), nav_href, opf_dir,

@@ -1,10 +1,7 @@
 """Kids and Teens only on a real say-so; Adult otherwise."""
 from __future__ import annotations
 
-from pathlib import Path
-
 from epubkit.library_hint import ADULT, KIDS, TEENS, recommend
-from epubkit.state import BookRecord
 
 
 def test_a_book_that_says_young_adult_goes_to_teens():
