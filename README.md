@@ -252,16 +252,43 @@ pages are not carried over.
 book — not that a file was processed — and keeps damage the book arrived with
 separate from anything the pipeline introduced.
 
-The report also suggests a library for each new book — Kids, Teens or Adult
-(with Fiction or Non-fiction for Adult) — grouped so it can be used when adding
-them. It goes only on what the book or a catalogue actually says: a subject
+The report also suggests a library for each new book — Kids, Teens, Adult
+(with Fiction or Non-fiction) or Cookbooks — grouped so it can be used when
+adding them. It goes only on what the book or a catalogue actually says: a subject
 heading such as "Young adult fiction" or "Juvenile fiction", or a description
 that names its reader ("middle grade", "ages 8–12"). A description that merely
 mentions a teenager or a children's author does not count, because adult novels
 are full of both. Anything without such a signal is Adult, since a wrong Adult is
 a nuisance and a wrong Kids is a child's Kobo showing an adult book. Suggestions
-that are not clearly settled are marked *check*. It is advice only; nothing is
-moved.
+that are not clearly settled are marked *check*.
+
+Each finished book is then moved into a folder of the output named for its
+library — `Kids/`, `Teens/`, `Adult/` or `Cookbooks/` — so each folder can be
+uploaded to the matching library as it is. A book whose suggestion is not clearly
+settled goes to `_Review/` instead: any low-confidence guess, and any Kids or
+Teens guess that is not high confidence. File names are not changed. Set
+`sort_into_libraries = false` under `[metadata]` to leave every book in the
+output folder.
+
+Cookbooks needs a cookbook subject heading ("Cooking", "Baking", "Recipes") and
+no fiction subject, so a novel with recipes in it stays a novel and a children's
+cookbook stays Kids. When only the model says Cookbooks, the book goes to
+`_Review/`.
+
+Teens needs the same kind of evidence as Kids. A model that guesses "young
+adult" from short length or plain prose is overruled to Adult (marked *check*):
+plenty of adult fiction, novellas above all, reads that way. Books of one series
+share a shelf, and a series of three or more shows as a single line. To settle a
+book or a whole series by hand, add a `library` to `epubkit-overrides.json` in
+the library folder (or the folder above it); the key is matched against the
+series, the title and the file name:
+
+```json
+{"The Murderbot Diaries": {"library": "Adult"}}
+```
+
+`library` accepts Kids, Teens, Adult or Cookbooks. An override is settled, so the
+book leaves `_Review/`; changing one moves the book on the next run.
 
 Every book goes through every step. A step that has nothing to do says why in
 the report — "slim: under the threshold (12 books)", "plan_omnibus: too short

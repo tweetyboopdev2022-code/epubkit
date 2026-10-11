@@ -6,6 +6,7 @@ reaches the output folder once every stage it ran has agreed to it.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -103,6 +104,19 @@ class Pipeline:
 
         legacy.adopt_state(work_root, STATE_NAME)
         state = RunState(work_root / STATE_NAME)
+        try:
+            os.listdir(cfg.paths.source)
+        except PermissionError:
+            # macOS gives each app its own permission for Downloads, Documents
+            # and Desktop. Without it the folder simply looks empty, and the
+            # run used to report "0 books" as if there were nothing to do.
+            self.log.error(
+                "cannot read %s - this app is not allowed into that folder. "
+                "On a Mac: System Settings > Privacy & Security > Files and "
+                "Folders (or Full Disk Access), and allow the app you ran "
+                "epubkit from (Terminal, iTerm, or sshd for a remote session)."
+                % cfg.paths.source)
+            return RunState(work_root / STATE_NAME)
         books = find_books(cfg.paths.source,
                            exclude=(out, work_root, cfg.paths.backup))
         self.log.info("%d book(s) found in %s", len(books), cfg.paths.source)
@@ -119,6 +133,15 @@ class Pipeline:
         if len(todo) != len(books):
             self.log.info("%d already done and unchanged, %d to process",
                           len(books) - len(todo), len(todo))
+
+        if "metadata" in [s.name for s in self.stages] and todo:
+            # Read every book's "Also by" page first, so a book can be placed
+            # in its series from a list printed in a later book of the batch.
+            from .tools import series_hint
+            try:
+                series_hint.harvest(todo, work_root / "series-lists.json")
+            except Exception as exc:                        # noqa: BLE001
+                self.log.debug("series lists not read up front: %s", exc)
 
         started = time.time()
         if cfg.run.dry_run:
@@ -150,15 +173,19 @@ class Pipeline:
         return state
 
     def _shelves(self, out: Path, work_root: Path) -> list[dict]:
-        """Last step: rate every finished book Kids / Teens / Adult."""
+        """Last step: rate every finished book Kids / Teens / Adult / Cookbooks,
+        then move each into the folder of that library."""
         if not self.config.metadata.suggest_shelves:
             return []
         from . import shelves
         self.log.info("choosing a library for each finished book...")
         try:
-            return shelves.classify_library(
+            rows = shelves.classify_library(
                 out, self.provider, work_root / "shelves-cache.json",
                 self.config.metadata.shelf_lookup, log=lambda m: self.log.info("  %s", m))
+            if self.config.metadata.sort_into_libraries:
+                rows = shelves.sort_library(out, rows, log=lambda m: self.log.info("  %s", m))
+            return rows
         except Exception as exc:                                    # noqa: BLE001
             self.log.warning("could not suggest libraries: %s", str(exc)[:120])
             return []
@@ -182,6 +209,10 @@ class Pipeline:
         self.progress.book_start(key, source.name)
 
         try:
+            # a work folder left by a run that was stopped part way would
+            # otherwise feed stale files into this one
+            if work.exists():
+                shutil.rmtree(work, ignore_errors=True)
             work.mkdir(parents=True, exist_ok=True)
             ctx = Context(config=cfg, record=rec, path=source, work=work,
                           log=self.log, provider=self.provider,

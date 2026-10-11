@@ -7,7 +7,6 @@ import pytest
 from epubkit import legacy
 from epubkit.config import Config
 
-
 # conftest stubs Config.discover out so no test picks up the developer's own
 # config; these tests are about discovery, so they put the real one back.
 _REAL_DISCOVER = Config.__dict__["discover"]
