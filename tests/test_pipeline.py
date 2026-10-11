@@ -15,6 +15,7 @@ from epubkit.stages.base import Stage, StageResult
 def cfg_for(src, out, **over):
     o = {"source": src, "output": out, "run.workers": 1,
          "recaps.enabled": False,
+         "metadata.sort_into_libraries": False,
          "run.stages": ("ingest", "repair", "validate")}
     o.update(over)
     return Config.load(None, o)
@@ -271,3 +272,12 @@ def test_split_creates_the_output_folder_for_its_plan(tmp_path, monkeypatch):
     monkeypatch.setattr("epubkit.stages.base.run_tool", fake_tool)
     assert cli.main(["split", str(book), "--out", str(out)]) == 0
     assert (out / "Bundle.split.json").is_file()
+
+
+def test_finished_books_are_sorted_into_library_folders(library, tmp_path):
+    from epubkit.shelves import FOLDERS
+    out = tmp_path / "lib"
+    run(cfg_for(library, out, **{"metadata.sort_into_libraries": True}))
+    assert not list(out.glob("*.epub"))
+    sorted_books = [p for p in out.glob("*/*.epub") if p.parent.name in FOLDERS]
+    assert len(sorted_books) == 2

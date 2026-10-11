@@ -1,4 +1,5 @@
-"""Suggest which library a finished book belongs in: Kids, Teens or Adult.
+"""Suggest which library a finished book belongs in: Kids, Teens, Adult or
+Cookbooks.
 
 A suggestion for the report, never an action. The reason it errs the way it
 does: a picture book in the adult library is an annoyance, but an adult
@@ -12,7 +13,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-KIDS, TEENS, ADULT = "Kids", "Teens", "Adult"
+KIDS, TEENS, ADULT, COOKBOOKS = "Kids", "Teens", "Adult", "Cookbooks"
+LIBRARIES = (KIDS, TEENS, ADULT, COOKBOOKS)
 
 # what a catalogue or a publisher writes for a younger reader
 _TEENS = re.compile(r"\b(young adult|y\.?a\.? fiction|teen(?:s|age|agers)?|"
@@ -26,6 +28,9 @@ _NONFICTION = re.compile(r"\b(non-?fiction|biograph\w*|memoirs?|autobiograph\w*|
                          r"self-help|history|science|essays|true crime|cooking|"
                          r"business|psychology|politics)\b", re.I)
 _FICTION = re.compile(r"\bfiction\b", re.I)
+# a cookbook says so in its subject headings ("Cooking / Regional", "Baking");
+# a cosy mystery with recipes at the back is filed under fiction, which wins
+_COOKBOOK = re.compile(r"\b(cook ?books?|cookery|cooking|recipes?|baking)\b", re.I)
 
 # A blurb is prose, and prose about an adult novel says "a teenage girl" and "a
 # children's author" all the time. So descriptions only count for wording that
@@ -83,6 +88,11 @@ def recommend(subjects: list[str] | None, description: str | None = None,
         return Suggestion(TEENS, confidence="low",
                           reasons=["says both %s and %s; chose the older shelf, check it"
                                    % (kids[0], teens[0])])
+
+    cook = _hits(_COOKBOOK, subs)
+    if cook and not _hits(_FICTION, [x for x in subs if not re.search(r"non-?fiction", x, re.I)]):
+        return Suggestion(COOKBOOKS, confidence="high" if len(cook) > 1 else "medium",
+                          reasons=["says: " + ", ".join(cook[:3])])
 
     folder = ""
     if _hits(_NONFICTION, subs) and not _hits(_FICTION, [s for s in subs

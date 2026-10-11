@@ -126,6 +126,9 @@ class MetadataConfig:
     suggest_shelves: bool = True
     #: let that step look the book up in Open Library / Google Books
     shelf_lookup: bool = True
+    #: then move each book into a folder named for its library (Kids, Teens,
+    #: Adult, Cookbooks), or _Review when the choice needs a look first
+    sort_into_libraries: bool = True
 
 
 @dataclass
