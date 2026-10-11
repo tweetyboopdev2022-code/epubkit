@@ -1,8 +1,8 @@
-import io
 import zipfile
 
 from epubkit.stages.ingest import classify
-from epubkit.tools import fix_epub3, series_hint as S
+from epubkit.tools import fix_epub3
+from epubkit.tools import series_hint as S
 
 
 def test_series_and_blurb_come_out_of_the_title():

@@ -34,6 +34,7 @@ def shelf_checks(out_dir: Path) -> list[str]:
     """
     import subprocess
     import sys
+
     from ..shelves import FOLDERS
     found = []
     # once the books are sorted, each library folder is its own shelf

@@ -29,7 +29,15 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from .library_hint import ADULT, COOKBOOKS, KIDS, LIBRARIES, TEENS, Suggestion, recommend
+from .library_hint import (
+    ADULT,
+    COOKBOOKS,
+    KIDS,
+    LIBRARIES,
+    TEENS,
+    Suggestion,
+    recommend,
+)
 
 RULES_VERSION = 6          # bump when the rules change, so cached answers refresh
 
