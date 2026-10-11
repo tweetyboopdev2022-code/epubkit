@@ -155,3 +155,40 @@ def test_a_series_shares_one_shelf_and_the_odd_one_out_is_flagged():
                              dict(mk("x", "Adult", "high"), series="")])
     assert [r["shelf"] for r in rows] == ["Kids", "Kids", "Kids", "Adult"]
     assert rows[2]["confidence"] == "low" and "rest of ASOUE" in rows[2]["why"]
+
+
+def test_a_model_guessing_teens_from_reading_level_alone_stays_adult():
+    m = Model('{"library":"Teens","folder":"Fiction","confidence":"medium",'
+              '"reason":"The reading level and novella format suggest a young adult audience."}')
+    s = decide(book(title="All Systems Red", series="The Murderbot Diaries"), EMPTY, stats(31000, 6.5), m)
+    assert s.library == ADULT and s.confidence == "low" and "check" in s.reasons[0]
+
+
+def test_a_ya_label_still_makes_teens_without_the_model():
+    s = decide(book(subjects=["Young Adult Fiction"]), EMPTY, stats(90000, 7.0), None)
+    assert s.library == TEENS
+
+
+def test_a_sure_model_may_name_teens_but_only_at_medium():
+    m = Model('{"library":"Teens","confidence":"high","reason":"known YA series"}')
+    s = decide(book(), EMPTY, stats(100000, 7.0), m)
+    assert s.library == TEENS and s.confidence == "medium"
+
+
+def test_overrides_set_a_whole_series_by_hand(tmp_path):
+    import json as _json
+    from epubkit.shelves import apply_overrides, load_overrides
+    (tmp_path / "epubkit-overrides.json").write_text(_json.dumps(
+        {"The Murderbot Diaries": {"library": "Adult"}, "x.epub": {"title": "no library here"}}))
+    rows = [dict(name="a.epub", title="Rogue Protocol", authors="Martha Wells",
+                 series="The Murderbot Diaries", shelf="Teens › Fiction", confidence="medium", why="m")]
+    out = apply_overrides(rows, load_overrides(tmp_path))
+    assert out[0]["shelf"] == "Adult › Fiction" and out[0]["confidence"] == "high"
+    assert "by hand" in out[0]["why"]
+
+
+def test_a_series_of_three_is_one_line_in_the_report():
+    rows = [dict(name=str(i), title="Book %d" % i, authors="Martha Wells", series="The Murderbot Diaries",
+                 shelf="Adult › Fiction", confidence="medium", why="w") for i in range(3)]
+    t = "\n".join(section(rows))
+    assert "- The Murderbot Diaries, 3 books — Martha Wells (w)" in t and "Book 1" not in t
