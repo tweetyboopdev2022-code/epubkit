@@ -173,15 +173,19 @@ class Pipeline:
         return state
 
     def _shelves(self, out: Path, work_root: Path) -> list[dict]:
-        """Last step: rate every finished book Kids / Teens / Adult."""
+        """Last step: rate every finished book Kids / Teens / Adult / Cookbooks,
+        then move each into the folder of that library."""
         if not self.config.metadata.suggest_shelves:
             return []
         from . import shelves
         self.log.info("choosing a library for each finished book...")
         try:
-            return shelves.classify_library(
+            rows = shelves.classify_library(
                 out, self.provider, work_root / "shelves-cache.json",
                 self.config.metadata.shelf_lookup, log=lambda m: self.log.info("  %s", m))
+            if self.config.metadata.sort_into_libraries:
+                rows = shelves.sort_library(out, rows, log=lambda m: self.log.info("  %s", m))
+            return rows
         except Exception as exc:                                    # noqa: BLE001
             self.log.warning("could not suggest libraries: %s", str(exc)[:120])
             return []
