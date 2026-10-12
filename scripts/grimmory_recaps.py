@@ -224,6 +224,8 @@ def cmd_audit(args) -> int:
             kind = "passages (old layout)"
         elif kind == "passages" and a.get("lead_off"):
             kind = "passages (wrong lead)"
+        elif kind == "passages" and a.get("lang_off"):
+            kind = "passages (wrong language)"
         counts[kind] = counts.get(kind, 0) + 1
         if args.verbose:
             say("%-24s %8.0f KB  %s" % (kind, a["book_kb"], b.relative_to(root)))
@@ -289,7 +291,8 @@ def cmd_run(args) -> int:
     todo = []
     for root, b in books:
         a = R.audit(b)
-        if a["kind"] == "passages" and not args.force and not a.get("lead_off") and (
+        if a["kind"] == "passages" and not args.force and not a.get("lead_off") \
+                and not a.get("lang_off") and (
                 a["format"] >= R.FORMAT or args.keep_older_passages):
             continue
         try:

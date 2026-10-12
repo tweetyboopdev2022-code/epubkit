@@ -57,6 +57,7 @@ enabled = true
 min_chars = 2000                 # shorter than this is front matter
 passage_words = 1500             # recap in passages this long, so it reaches your page
 cast = true                      # everyone met or heard of, from where they are first named
+language = "auto"                # auto: French books get French recaps, English ones English
 
 [validate]
 require_clean = true             # a book with errors is reported, not shipped
