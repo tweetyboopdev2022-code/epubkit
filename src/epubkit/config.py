@@ -152,6 +152,8 @@ class RecapConfig:
     #: who the relationships are described against. Empty: worked out from
     #: the book. Set it when a run is limited to one book or one series
     main_character: str = ""
+    #: auto | en | fr. Auto reads the book: a French book gets French prompts
+    #: and French wording throughout, an English one English
     language: str = "auto"
 
 

@@ -127,10 +127,177 @@ list nobody from it who is not also in the passage):
 
 """
 
+# ------------------------------------------------------------ language
+#
+# A French book gets French prompts and French fixed wording, so nothing in its
+# recaps or who's who is English. Asking an English prompt to "write in the
+# language of the passage" was not enough: gemma drifted into English, and the
+# lines epubkit writes itself ("not yet connected to ...") were English anyway.
+
+SYSTEM_FR = (
+    "Vous rédigez des résumés sans divulgâchage et des listes de personnages "
+    "pour les lecteurs d'un roman. Vous n'utilisez que ce que dit le passage "
+    "fourni, vous ne puisez jamais dans d'autres connaissances du livre, et "
+    "vous ne dites jamais ce que quelqu'un s'avère être. Vous écrivez "
+    "toujours en français."
+)
+
+HERO_PROMPT_FR = """Voici des extraits pris dans tout un livre. Qui en est le personnage principal ?
+
+Les noms qui reviennent dans le plus de chapitres sont : {names}
+
+Un livre peut s'ouvrir sur quelqu'un d'autre - un prologue, un méchant, un
+homme politique - alors jugez d'après tous les extraits, pas seulement le
+premier. Répondez par un seul nom, écrit exactement comme dans la liste
+ci-dessus, et rien d'autre. Si l'histoire est racontée par un « je » dont le
+nom n'est pas dans la liste, répondez : le narrateur
+
+{text}
+"""
+
+PROMPT_FR = """Le lecteur a lu ce livre jusqu'à la FIN du passage ci-dessous, et rien au-delà.
+Le personnage principal de tout le livre est {hero}, y compris dans les passages
+où {hero} n'apparaît pas. Personne d'autre n'est jamais « le personnage principal ».
+
+Règles :
+- N'utilisez QUE ce que dit ce passage. Si vous connaissez ce livre, n'en tenez pas compte.
+- Ne dites jamais ce que devient quelqu'un : aucune mort, trahison, révélation
+  ou destinée au-delà de ce que montre le passage lui-même.
+- Écrivez tout en français, y compris les descriptions des personnages.
+  Texte brut, sans markdown.
+- Ne faites jamais de remarque sur les absents (« Harry n'est pas dans ce passage »).
+
+Répondez exactement sous cette forme, en gardant tels quels les mots RÉSUMÉ,
+PERSONNAGES, rencontré et évoqué :
+RÉSUMÉ : <2 à 4 phrases au passé : ce qui s'est passé dans ce passage, en
+terminant par la situation à ses dernières lignes - qui est là et ce qui va
+arriver - pour que le lecteur sache exactement où il s'est arrêté.>
+PERSONNAGES :
+<Nom> | <rencontré ou évoqué> | <comment le passage le présente d'abord> | <son lien avec {hero} et son rôle>
+
+PERSONNAGES doit lister CHAQUE individu que le passage nomme ou évoque, pas
+seulement ceux qui sont présents. Incluez les personnes seulement mentionnées
+en passant, dont on parle, dont on se souvient, à qui ou sur qui l'on écrit, ou
+qui figurent dans une histoire, une rumeur, une légende ou un récit historique
+que quelqu'un raconte - y compris les morts et les absents. Laissez de côté les
+groupes, les espèces, les lieux, les organisations et les objets.
+- Nom : tel que le texte l'appelle. Un titre employé comme nom compte (« Le Duc »).
+- rencontré : la personne est physiquement présente ou parle dans ce passage.
+  évoqué : on en parle seulement, on s'en souvient ou on la nomme - y compris
+  toute personne morte ou lointaine.
+- Le troisième champ dit comment la personne est présentée la première fois,
+  avant que la suite du passage n'y ajoute quoi que ce soit. De 4 à 12 mots.
+- Le quatrième champ dit qui EST cette personne, pas ce qu'elle a fait dans
+  une scène. N'indiquez un lien avec {hero} QUE si ce passage le montre ou le
+  dit lui-même. Ne déduisez jamais de liens familiaux ou de relations de quoi
+  que ce soit hors du passage ; si le passage ne la relie pas à {hero},
+  commencez par « pas encore lié à {hero} » puis donnez son rôle. Sinon :
+  son lien avec {hero} (famille, ami, ennemi, professeur, inconnu, quelqu'un
+  dont {hero} a seulement entendu parler...) et son rôle (un professeur, une
+  ministre, un domestique...), tels qu'à la fin de ce passage. De 4 à 14 mots.
+  Exemples : « meilleur ami de Harry, un camarade d'école » ;
+  « pas encore lié à Wren ; le magistrat de la ville ».
+  Pour {hero} lui-même, écrivez : le personnage principal.
+
+{before}Passage :
+{text}
+"""
+
+BEFORE_FR = """Juste avant ce passage (pour le contexte seulement - ne le résumez pas,
+et ne listez personne qui s'y trouve sans être aussi dans le passage) :
+{text}
+
+"""
+
+#: everything a recap run says in the book's own language
+TEXT = {
+    "en": {"system": SYSTEM, "hero_prompt": HERO_PROMPT, "prompt": PROMPT,
+           "before": BEFORE, "narrator": "the narrator",
+           "main": "the main character", "unlinked": "not yet connected to %s"},
+    "fr": {"system": SYSTEM_FR, "hero_prompt": HERO_PROMPT_FR, "prompt": PROMPT_FR,
+           "before": BEFORE_FR, "narrator": "le narrateur",
+           "main": "le personnage principal", "unlinked": "pas encore lié à %s"},
+}
+NARRATORS = {"the narrator", "le narrateur", "la narratrice"}
+UNLINKED = re.compile(r"(?i)^(not yet connected|pas encore li[ée])")
+
+_EN_WORDS = set("the and was that his her with for had not but you she they said "
+                "have this from what were would there could into been him which "
+                "when of to".split())
+# words Spanish, Italian and Portuguese do not share, so those are not French
+_FR_WORDS = set("les des et est une dans qui pas pour sur avec il elle "
+                "du au mais nous vous était avait plus ses lui je".split())
+
+
+def _text_language(text: str) -> str:
+    """'en' or 'fr' from the commonest words, or '' when it is not clear."""
+    words = re.findall(r"[^\W\d_]+", text.lower())
+    en = sum(1 for w in words if w in _EN_WORDS)
+    fr = sum(1 for w in words if w in _FR_WORDS)
+    if en + fr < 40:
+        return ""
+    if fr > en * 2:
+        return "fr"
+    if en > fr * 2:
+        return "en"
+    return ""
+
+
+def _declared_language(opf: str) -> str:
+    m = re.search(r"<dc:language[^>]*>\s*([^<\s]+)", opf or "", re.I)
+    code = (m.group(1) if m else "").lower()
+    if code.startswith(("fr", "fre", "fra")):
+        return "fr"
+    return "en" if code.startswith("en") else ""
+
+
+def _language(setting: str, text: str, opf: str) -> str:
+    """The language a book's recaps are written in: 'en' or 'fr'.
+
+    The text decides before dc:language does: a converted book is often
+    labelled "en" whatever it is written in. A book in neither language gets
+    the English prompts, which ask for the passage's own language.
+    """
+    setting = (setting or "auto").strip().lower()[:2]
+    if setting in TEXT:
+        return setting
+    m = re.search(r"<dc:language[^>]*>\s*([^<\s]+)", opf or "", re.I)
+    declared = (m.group(1) if m else "").lower()
+    if declared and not declared.startswith(("en", "fr")):
+        return "en"
+    return _text_language(text) or _declared_language(opf) or "en"
+
+
+def book_language(book: Path, setting: str = "auto") -> str:
+    """The recap language for a book on disk, from a sample of its text."""
+    try:
+        with zipfile.ZipFile(book) as z:
+            opf_name = _opf_name(z)
+            opf = z.read(opf_name).decode("utf-8", "ignore") if opf_name else ""
+            base = posixpath.dirname(opf_name) if opf_name else ""
+            manifest = _manifest(opf)
+            spine = [_join(base, manifest[r]) for r in
+                     re.findall(r'<itemref\b[^>]*\bidref="([^"]+)"', opf) if r in manifest]
+            text = ""
+            for full in spine[len(spine) // 4:] + spine[:len(spine) // 4]:
+                try:
+                    text += " " + _plain(z.read(full).decode("utf-8", "ignore"))[:6000]
+                except KeyError:
+                    continue
+                if len(text) > 20000:
+                    break
+    except (zipfile.BadZipFile, OSError, KeyError):
+        return "en"
+    return _language(setting, text, opf)
+
+
 FRONT = ("praise for", "copyright", "all rights reserved", "table of contents",
          "also by", "about the author", "dedication", "acknowledgment",
          "acknowledgement", "a note on the type", "first published",
-         "reading group guide", "discussion questions")
+         "reading group guide", "discussion questions",
+         "du même auteur", "des mêmes auteurs", "tous droits réservés",
+         "table des matières", "remerciements", "à propos de l'auteur",
+         "dépôt légal", "achevé d'imprimer", "dans la même collection")
 
 SCENE_BREAK = re.compile(r"^[\s*#~•·◆◇✦❖§—–-]{0,20}$")
 SPAN = re.compile(
@@ -165,19 +332,25 @@ class RecapStage(Stage):
         tails = [""] + [_tail(p[3]) for p in passages[:-1]]
         lookup = {id(p): t for p, t in zip(passages, tails)}  # noqa: B905
 
+        lang = _language(getattr(rc, "language", "auto"),
+                         " ".join(t for _o, _p, _l, ps in docs[:8] for _n, t in ps)[:40000],
+                         _opf_text(ctx.path))
+        words = TEXT[lang]
+        if lang != "en":
+            ctx.note("recaps written in %s" % {"fr": "French"}.get(lang, lang))
         ctx.report("finding the main character (%d passages to go)" % len(passages))
-        hero = _hero(ctx, docs)
+        hero = _hero(ctx, docs, lang)
         ctx.note("main character: %s" % hero)
 
         def one(item):
             order, path, label, paras = item
             text = "\n\n".join(t for _n, t in paras)
             tail = lookup.get(id(item), "")
-            before = BEFORE.format(text=tail) if tail else ""
+            before = words["before"].format(text=tail) if tail else ""
             try:
                 reply = ctx.provider.complete(
-                    PROMPT.format(hero=hero, text=text[:16000], before=before),
-                    system=SYSTEM)
+                    words["prompt"].format(hero=hero, text=text[:16000], before=before),
+                    system=words["system"])
             except Exception as exc:                        # noqa: BLE001
                 ctx.log.debug("    recap %s:%d failed: %s", path, paras[0][0], exc)
                 return None
@@ -205,13 +378,13 @@ class RecapStage(Stage):
 
         parts = [(it[0], it[1], it[3][-1][0], it[2], s)
                  for it, s, _p in got if s]
-        people = _people_rows(got, hero, ctx) if rc.cast else []
+        people = _people_rows(got, hero, ctx, lang) if rc.cast else []
         legacy = bool(getattr(rc, "legacy_files", False))
         chapters = _chapter_rows(parts)
         cast = _legacy_cast(people) if legacy else []
         meta = [("format", str(FORMAT)), ("passage_words", str(rc.passage_words)),
                 ("model", str(getattr(ctx.provider, "model", "") or "")),
-                ("main_character", hero)]
+                ("main_character", hero), ("language", lang)]
         _embed(ctx.path, parts, people, chapters if legacy else [], cast,
                _spine(ctx.path), meta)
 
@@ -272,12 +445,21 @@ def _documents(book: Path, min_chars: int):
                 if size < min_chars and not label:
                     continue
                 if not label:
-                    m = re.match(r"(?:unnamed\s+)?(chapter\s+\w+)", head, re.I)
+                    m = re.match(r"(?:unnamed\s+)?((?:chapter|chapitre)\s+\w+)", head, re.I)
                     label = m.group(1).title() if m else "Section %d" % order
                 out.append((order, full, label, paras))
     except (zipfile.BadZipFile, OSError):
         return []
     return out
+
+
+def _opf_text(book: Path) -> str:
+    try:
+        with zipfile.ZipFile(book) as z:
+            name = _opf_name(z)
+            return z.read(name).decode("utf-8", "ignore") if name else ""
+    except (zipfile.BadZipFile, OSError, KeyError):
+        return ""
 
 
 def _spine(book: Path) -> list[tuple[int, str]]:
@@ -301,7 +483,8 @@ def _spine(book: Path) -> list[tuple[int, str]]:
     return [(i, _join(base, manifest[r])) for i, r in enumerate(ids) if r in manifest]
 
 
-_NAV_LABEL = re.compile(r"^\s*(table of )?contents?\s*$|^\s*(index|toc)\s*$", re.I)
+_NAV_LABEL = re.compile(r"^\s*(table of )?contents?\s*$|^\s*(index|toc)\s*$|"
+                        r"^\s*(table des mati[eè]res|sommaire)\s*$", re.I)
 
 
 def _is_navigation(raw: bytes, paras, label: str) -> bool:
@@ -458,7 +641,7 @@ def _tail(paras, chars: int = 900) -> str:
 # ------------------------------------------------------------ the model
 
 
-def _hero(ctx: Context, docs) -> str:
+def _hero(ctx: Context, docs, lang: str = "en") -> str:
     """The main character, judged from the whole book rather than its opening.
 
     Asking about the opening alone named "The Prime Minister" as the lead of
@@ -471,9 +654,10 @@ def _hero(ctx: Context, docs) -> str:
     fixed = (getattr(ctx.config.recaps, "main_character", "") or "").strip()
     if fixed:
         return fixed
+    words = TEXT[lang]
     candidates = _recurring_names(docs)
     if not candidates:
-        return "the narrator"
+        return words["narrator"]
     # A series named after its lead ("Detective Gina Harte") settles it. A
     # crime novel's victims often get the opening chapters, and the model
     # then picked Annabel, Holly or "the narrator" for Gina Harte books.
@@ -486,12 +670,13 @@ def _hero(ctx: Context, docs) -> str:
         for _o, _p, label, paras in picks)
     try:
         reply = ctx.provider.complete(
-            HERO_PROMPT.format(names=", ".join(candidates), text=extracts), system=SYSTEM)
+            words["hero_prompt"].format(names=", ".join(candidates), text=extracts),
+            system=words["system"])
         name = reply.text.strip().splitlines()[0].strip(" .\"'*")
     except Exception:                                       # noqa: BLE001
         name = ""
-    if name.lower() == "the narrator":
-        return "the narrator"
+    if name.lower() in NARRATORS:
+        return words["narrator"]
     for c in candidates:
         if name.lower() == c.lower() or (name and name.lower() in c.lower().split()):
             return c
@@ -511,7 +696,7 @@ def _series_lead(ctx: Context, candidates) -> str:
             series = html.unescape(m.group(1)) if m else ""
         except (OSError, zipfile.BadZipFile, StopIteration):
             series = ""
-    words = {w.lower() for w in re.findall(r"[A-Za-z][\w'’]{2,}", series)}
+    words = {w.lower() for w in re.findall(r"[^\W\d_][\w'’]{2,}", series)}
     if not words:
         return ""
     for c in candidates:
@@ -530,6 +715,11 @@ _NOT_NAMES = {
     "friday", "saturday", "sunday", "january", "february", "march", "april", "may",
     "june", "july", "august", "september", "october", "november", "december",
     "christmas", "ministry", "minister", "prime", "king", "queen", "prince", "dark",
+    # French: titles and forms of address, which are capitalised mid-sentence
+    "monsieur", "madame", "mademoiselle", "mme", "mlle", "maître", "docteur",
+    "père", "mère", "oncle", "tante", "dieu", "seigneur", "sire", "roi", "reine",
+    "princesse", "saint", "sainte", "capitaine", "professeur", "majesté", "altesse",
+    "noël", "français", "française", "anglais", "anglaise",
 }
 
 
@@ -543,7 +733,8 @@ def _recurring_names(docs, keep: int = 8) -> list[str]:
     from collections import Counter
 
     spread, total = Counter(), Counter()
-    pat = re.compile(r"(?<=[a-z,;:\u2019'] )([A-Z][a-z\u2019'-]{2,})")
+    # accented letters count: "Hélène" and "Émile" are names too
+    pat = re.compile(r"(?<=[a-zà-öø-ÿœ,;:\u2019'] )([A-ZÀ-ÖØ-ÞŒ][a-zà-öø-ÿœ\u2019'-]{2,})")
     for _o, _p, _l, paras in docs:
         seen = set()
         for _n, t in paras:
@@ -564,12 +755,14 @@ def _parse(text: str) -> tuple[str, list[tuple[str, str, str, str]]]:
         return "", []
     text = re.sub(r"\*+", "", text)
     summary = ""
-    m = re.search(r"SUMMARY\s*:\s*(.+?)(?:\n\s*(?:PEOPLE|CHARACTERS)\s*:|\Z)",
+    m = re.search(r"(?:SUMMARY|R[ÉE]SUM[ÉE])\s*:\s*(.+?)"
+                  r"(?:\n\s*(?:PEOPLE|CHARACTERS|PERSONNAGES|PERSONNES)\s*:|\Z)",
                   text, re.S | re.I)
     if m:
         summary = re.sub(r"\s+", " ", m.group(1)).strip()
     people = []
-    m = re.search(r"(?:PEOPLE|CHARACTERS)\s*:\s*(.+)\Z", text, re.S | re.I)
+    m = re.search(r"(?:PEOPLE|CHARACTERS|PERSONNAGES|PERSONNES)\s*:\s*(.+)\Z",
+                  text, re.S | re.I)
     if m:
         for line in m.group(1).splitlines():
             line = line.strip().lstrip("-•0123456789. ").strip()
@@ -577,10 +770,12 @@ def _parse(text: str) -> tuple[str, list[tuple[str, str, str, str]]]:
             if len(bits) < 4 or not bits[0]:
                 continue
             name, status, intro, rel = bits[0], bits[1].lower(), bits[2], bits[3]
-            name = re.sub(r"\s*\(.*?\)\s*", " ", name).strip(" .,:;\"'")
-            if not (1 < len(name) < 45) or not name[0].isupper():
+            name = re.sub(r"\s*\(.*?\)\s*", " ", name).strip(" .,:;\"'«»\u00a0\u202f")
+            if not (1 < len(name) < 45) or \
+                    not re.sub(r"^[dl][’']", "", name, flags=re.I)[:1].isupper():
                 continue
-            status = "met" if status.startswith("met") else "heard"
+            # the French prompt asks for "rencontré" / "évoqué"
+            status = "met" if status.startswith(("met", "rencontr")) else "heard"
             people.append((name, status, _tidy(intro), _tidy(rel)))
     return summary, people
 
@@ -603,8 +798,13 @@ _GROUPS = {"family", "families", "staff", "office", "ministry", "department",
            "builders", "eaters", "obliviators", "aurors", "dementors", "muggles",
            "students", "teachers", "guards", "twins", "parents", "children",
            "brothers", "sisters", "villagers", "soldiers", "police", "army",
-           "committee", "board", "house", "school", "class", "gang", "club"}
-_SMALL = {"the", "of", "de", "la", "le", "van", "von", "der", "da", "du", "del", "al", "bin"}
+           "committee", "board", "house", "school", "class", "gang", "club",
+           "famille", "familles", "ministère", "gouvernement", "armée", "foule",
+           "élèves", "professeurs", "gardes", "soldats", "villageois", "enfants",
+           "frères", "sœurs", "jumeaux", "jumelles", "conseil", "équipe", "école",
+           "classe", "bande", "gens", "habitants", "policiers"}
+_SMALL = {"the", "of", "de", "la", "le", "les", "des", "van", "von", "der", "da", "du",
+          "del", "al", "bin"}
 
 
 def _individual(name: str) -> bool:
@@ -623,13 +823,14 @@ def _individual(name: str) -> bool:
     for w in words:
         if w.lower() in _SMALL:
             continue
-        if not w[:1].isupper():
+        # "d'Artagnan", "l'Inconnu"
+        if not re.sub(r"^[dl][’']", "", w, flags=re.I)[:1].isupper():
             return False
     return True
 
 
 def _is_hero(name: str, hero: str) -> bool:
-    if not hero or hero == "the narrator":
+    if not hero or hero in NARRATORS:
         return False
     a = {w.lower() for w in name.split() if w.lower() not in _SMALL}
     b = {w.lower() for w in hero.split() if w.lower() not in _SMALL}
@@ -639,9 +840,11 @@ def _is_hero(name: str, hero: str) -> bool:
 
 def _not_the_lead(rel: str, intro: str) -> str:
     """Only the lead is the main character; strip the claim from anyone else."""
-    if "main character" not in rel.lower():
+    if "main character" not in rel.lower() and "personnage principal" not in rel.lower():
         return rel
     cleaned = re.sub(r"(?i)\b(the )?main character('s)?( of the (story|book))?[, ]*", "", rel)
+    cleaned = re.sub(r"(?i)\b(le |du )?personnage principal"
+                     r"( de l'histoire| du livre| du roman)?[, ]*", "", cleaned)
     cleaned = cleaned.strip(" ,;")
     return cleaned if len(cleaned.split()) >= 3 else intro
 
@@ -656,7 +859,7 @@ def _first_mention(name: str, paras) -> int | None:
     words. The model is not trusted with positions, or with names: None means
     the passage never names this person, and the caller leaves them out.
     """
-    bare = re.sub(r"^(?i:the)\s+", "", name)
+    bare = _bare(name)
     words = [w for w in re.findall(r"[\w'’.-]+", bare) if w[:1].isupper()]
     tries = [bare] + ([words[-1], words[0]] if len(words) > 1 else [])
     tries = [t for t in tries if len(t) >= 3 and t.lower() not in _NOT_A_NAME]
@@ -668,6 +871,11 @@ def _first_mention(name: str, paras) -> int | None:
     return None
 
 
+def _bare(name: str) -> str:
+    """The name without a leading article, which the text lowercases mid-sentence."""
+    return re.sub(r"^(?i:(?:the|le|la|les)\s+|l['’])", "", name)
+
+
 def _cut_off(name: str, paras) -> bool:
     """A name the text only ever breaks off mid-word: "Lord Vol-"."""
     last = name.split()[-1].rstrip(".")
@@ -676,7 +884,7 @@ def _cut_off(name: str, paras) -> bool:
     return bool(hits) and all(h in "-\u2014\u2013" and h for h in hits)
 
 
-def _unclaim(rel: str, hero: str) -> str:
+def _unclaim(rel: str, hero: str, lang: str = "en") -> str:
     """Remove a tie to the lead that a passage without the lead cannot show.
 
     Gemma called Bellatrix "Harry's acquaintance" and Fudge "Harry's friend"
@@ -685,12 +893,13 @@ def _unclaim(rel: str, hero: str) -> str:
     words = [w for w in hero.split() if w[:1].isupper()]
     if not words or not re.search(r"\b(%s)\b" % "|".join(map(re.escape, words)), rel):
         return rel
-    if rel.lower().startswith("not yet connected"):
+    if UNLINKED.match(rel):
         return rel
-    rest = re.split(r"[;,]\s*", rel, maxsplit=1)
+    rest = re.split(r"\s*[;,]\s*", rel, maxsplit=1)
     role = rest[1] if len(rest) > 1 and not re.search(
         r"\b(%s)\b" % "|".join(map(re.escape, words)), rest[1]) else ""
-    return "not yet connected to %s" % hero + ("; " + role if role else "")
+    sep = " ; " if lang == "fr" else "; "
+    return TEXT[lang]["unlinked"] % hero + (sep + role if role else "")
 
 
 def _all_words_present(name: str, paras) -> bool:
@@ -700,7 +909,7 @@ def _all_words_present(name: str, paras) -> bool:
     Sirius; an invented first name slips through the same way.
     """
     text = " ".join(t for _n, t in paras)
-    for w in re.findall(r"[\w'’.-]+", re.sub(r"^(?i:the)\s+", "", name)):
+    for w in re.findall(r"[\w'’.-]+", _bare(name)):
         if w[:1].isupper() and w.lower() not in _NOT_A_NAME and len(w) > 1:
             if not re.search(r"(?<![\w])%s(?![\w])" % re.escape(w.rstrip(".")), text):
                 return False
@@ -709,10 +918,13 @@ def _all_words_present(name: str, paras) -> bool:
 
 _NOT_A_NAME = {"the", "mr", "mr.", "mrs", "mrs.", "miss", "ms", "ms.", "dr", "dr.",
                "sir", "lady", "lord", "king", "queen", "prince", "princess",
-               "uncle", "aunt", "professor", "captain", "old", "young", "saint"}
+               "uncle", "aunt", "professor", "captain", "old", "young", "saint",
+               "le", "la", "les", "m.", "monsieur", "madame", "mademoiselle", "mme",
+               "mlle", "docteur", "maître", "roi", "reine", "princesse", "oncle",
+               "tante", "professeur", "capitaine", "sainte", "père", "mère"}
 
 
-def _people_rows(got, hero, ctx):
+def _people_rows(got, hero, ctx, lang: str = "en"):
     """-> [(order, path, para, name, met|heard, description)], sorted by position.
 
     Two rows per person per passage at most:
@@ -727,7 +939,7 @@ def _people_rows(got, hero, ctx):
     for (order, path, _label, paras), _s, listed in got:
         end = paras[-1][0]
         # a passage that never names the lead cannot show anyone's tie to them
-        hero_here = hero == "the narrator" or any(
+        hero_here = hero in NARRATORS or any(
             _all_words_present(w, paras) for w in hero.split() if w[:1].isupper())
         people = [(one, st, i, r) for name, st, i, r in listed
                   for one in split_people(name)]
@@ -743,11 +955,11 @@ def _people_rows(got, hero, ctx):
             if _cut_off(name, paras):
                 continue
             if _is_hero(name, hero):
-                rel = "the main character"
+                rel = TEXT[lang]["main"]
             else:
                 rel = _not_the_lead(rel, intro)
                 if not hero_here:
-                    rel = _unclaim(rel, hero)
+                    rel = _unclaim(rel, hero, lang)
             raw.append((_pos(order, at), (order, path, at, status, "intro", intro), name))
             raw.append((_pos(order, end), (order, path, end, status, "rel", rel), name))
 
@@ -992,7 +1204,7 @@ def audit(book: Path) -> dict:
            "chapters": 0, "people": 0, "heard_of": 0, "recap_kb": 0.0,
            "book_kb": round(book.stat().st_size / 1024, 1), "kepub": False,
            "passage_words": "", "model": "", "main_character": "",
-           "lead_off": False, "error": ""}
+           "lead_off": False, "language": "", "lang_off": False, "error": ""}
     try:
         with zipfile.ZipFile(book) as z:
             names = z.namelist()
@@ -1024,6 +1236,7 @@ def audit(book: Path) -> dict:
                     out["passage_words"] = meta.get("passage_words", "")
                     out["model"] = meta.get("model", "")
                     out["main_character"] = meta.get("main_character", "")
+                    out["language"] = meta.get("language", "")
                     # a series named after a person in the book ("Detective
                     # Gina Harte") whose recaps were written around someone
                     # else: done before the series-lead rule, redo them
@@ -1052,4 +1265,8 @@ def audit(book: Path) -> dict:
                     "utf-8", "ignore").splitlines() if r])
     except (zipfile.BadZipFile, OSError, KeyError, ValueError) as exc:
         out["error"] = str(exc)
+    if out["kind"] == "passages" and not out["error"]:
+        # recaps from before French support, or in the wrong language: redo.
+        # Books from then carry no language and were all written as English.
+        out["lang_off"] = book_language(book) != (out["language"] or "en")
     return out
