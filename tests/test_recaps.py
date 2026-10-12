@@ -631,3 +631,31 @@ def test_lean_cast_asks_only_for_news_but_still_counts_everyone(tmp_path):
     assert tam and tam[0][4] == "met"
     # the count rides on the kept rows; seen in every passage is still known
     assert len(passages) > 1
+
+
+def test_a_series_title_word_like_the_is_not_a_wrong_lead(tmp_path):
+    """"The Chronicles of Narnia" and "The White Witch" share only "The":
+    that flagged every Narnia book as written around the wrong lead."""
+    ch = ["MARK%d %s" % (i, FILLER) for i in range(4)]
+    ch[0] = "Lucy met The White Witch in the snow. " + FILLER
+    book = build(tmp_path / "n.kepub.epub", [ch])
+    run(tmp_path, book, Fake({"Witch": "The White Witch | met | a queen in a sledge | "
+                                       "not yet connected to Lucy; a queen"}),
+        **{"recaps.main_character": "Lucy"})
+    _set_series(book, "The Chronicles of Narnia")
+    assert R.audit(book)["lead_off"] is False
+    # a series that really is named after someone else still counts
+    _set_series(book, "The White Witch Saga")
+    assert R.audit(book)["lead_off"] is True
+
+
+def _set_series(book, series):
+    with zipfile.ZipFile(book) as z:
+        items = [(i, z.read(i.filename)) for i in z.infolist()]
+    with zipfile.ZipFile(book, "w") as z:
+        for info, data in items:
+            if info.filename.endswith(".opf"):
+                data = re.sub(rb'<meta name="calibre:series"[^>]*/>', b"", data).replace(
+                    b"</metadata>", b'<meta name="calibre:series" content="%s"/></metadata>'
+                    % series.encode())
+            z.writestr(info, data)

@@ -843,7 +843,7 @@ def _series_lead(ctx: Context, candidates) -> str:
             series = html.unescape(m.group(1)) if m else ""
         except (OSError, zipfile.BadZipFile, StopIteration):
             series = ""
-    words = {w.lower() for w in re.findall(r"[^\W\d_][\w'’]{2,}", series)}
+    words = _series_words(series)
     if not words:
         return ""
     for c in candidates:
@@ -851,6 +851,29 @@ def _series_lead(ctx: Context, candidates) -> str:
         if parts and parts[0] in words:
             return c
     return ""
+
+
+#: words in a series title that are never the lead's name. "The" was the one
+#: that mattered: "The Chronicles of Narnia" shares it with "The White Witch",
+#: and every Narnia, Twilight and Hunger Games book was flagged as written
+#: around the wrong main character.
+_SERIES_FILLER = {"the", "and", "les", "des", "saga", "series", "book", "books",
+                  "chronicles", "trilogy", "cycle", "sequence", "quartet", "sextet",
+                  "tales", "adventures", "adventure", "guide", "collection", "novels",
+                  "novel", "mysteries", "mystery", "files", "legacy", "world"}
+
+
+def _series_words(series: str) -> set[str]:
+    """Words of a series title that could be a person's name."""
+    return {w.lower() for w in re.findall(r"[^\W\d_][\w'’]{2,}", series or "")
+            if w.lower() not in _SERIES_FILLER and w.lower() not in _NOT_A_NAME}
+
+
+def _first_name(name: str) -> str:
+    """First word of a name, past any article or title: "The White Witch" -> white."""
+    words = [w.lower().strip(".,") for w in (name or "").split()]
+    words = [w for w in words if w not in _SMALL and w not in _NOT_A_NAME]
+    return words[0] if words else ""
 
 
 _NOT_NAMES = {
@@ -1394,10 +1417,9 @@ def audit(book: Path) -> dict:
                             re.search(r'property="belongs-to-collection"[^>]*>([^<]*)<', opf)
                         series = html.unescape(m.group(1)) if m else ""
                     if series and here + "people.tsv" in names:
-                        firsts = {r[3].split()[0].lower() for r in people
-                                  if len(r) > 4 and r[3].split()}
-                        words = {w.lower() for w in re.findall(r"[A-Za-z][\w']{2,}", series)}
-                        lead = (out["main_character"].split() or [""])[0].lower()
+                        firsts = {_first_name(r[3]) for r in people if len(r) > 4}
+                        words = _series_words(series)
+                        lead = _first_name(out["main_character"])
                         named = words & firsts
                         out["lead_off"] = bool(named) and lead not in words
             elif here + "recaps.tsv" in names:
