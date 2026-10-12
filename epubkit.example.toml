@@ -19,6 +19,8 @@ model    = "llama3.1:latest"
 endpoint = "http://localhost:11434"
 timeout  = 180
 concurrency = 2                  # chapters summarised at once
+context = 8192                   # ollama: tokens per request; its own default is too small for a recap
+keep_alive = "30m"               # ollama: keep the model loaded between books
 
 [metadata]
 sources = ["openlibrary", "googlebooks"]
@@ -58,6 +60,8 @@ min_chars = 2000                 # shorter than this is front matter
 passage_words = 1500             # recap in passages this long, so it reaches your page
 cast = true                      # everyone met or heard of, from where they are first named
 language = "auto"                # auto: French books get French recaps, English ones English
+resume = true                    # a stopped run picks up where it left off
+lean_cast = false                # ask only for new or changed people: faster, try on one book first
 
 [validate]
 require_clean = true             # a book with errors is reported, not shipped
