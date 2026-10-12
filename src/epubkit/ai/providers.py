@@ -90,13 +90,17 @@ class OllamaProvider(Provider):
     send_think_flag = True
 
     def _call(self, prompt, system):
+        options = {"temperature": self.temperature, "num_predict": self.max_tokens}
+        if self.context:
+            options["num_ctx"] = self.context
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": self.temperature,
-                        "num_predict": self.max_tokens},
+            "stream": True,
+            "options": options,
         }
+        if self.keep_alive:
+            payload["keep_alive"] = self.keep_alive
         if system:
             payload["system"] = system
         if self.send_think_flag:
@@ -154,4 +158,6 @@ def build(ai_config) -> Provider:
         timeout=ai_config.timeout,
         max_tokens=ai_config.max_tokens,
         temperature=ai_config.temperature,
+        context=getattr(ai_config, "context", 0),
+        keep_alive=getattr(ai_config, "keep_alive", ""),
     )

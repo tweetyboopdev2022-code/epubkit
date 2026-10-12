@@ -39,12 +39,15 @@ Files written beside the OPF, in the manifest and never the spine:
 """
 from __future__ import annotations
 
+import hashlib
 import html
+import json
 import os
 import posixpath
 import re
 import shutil
 import tempfile
+import threading
 import urllib.parse
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -209,13 +212,41 @@ et ne listez personne qui s'y trouve sans être aussi dans le passage) :
 
 """
 
+LEAN = """
+The reader already knows these people, as of the passages before this one:
+{known}
+
+This overrides "every individual" above: in PEOPLE list ONLY
+- people who are not in that list,
+- people from that list who are met in person for the first time in this
+  passage (they are marked heard),
+- people from that list whose relationship to {hero} or whose role changes
+  in this passage.
+Leave everyone else out, even when the passage names them.
+"""
+
+LEAN_FR = """
+Le lecteur connaît déjà ces personnes, d'après les passages précédents :
+{known}
+
+Ceci remplace « chaque individu » ci-dessus : dans PERSONNAGES, listez SEULEMENT
+- les personnes absentes de cette liste,
+- les personnes de cette liste rencontrées en personne pour la première fois
+  dans ce passage (elles sont marquées évoqué),
+- les personnes de cette liste dont le lien avec {hero} ou le rôle change
+  dans ce passage.
+Laissez de côté tous les autres, même si le passage les nomme.
+"""
+
 #: everything a recap run says in the book's own language
 TEXT = {
     "en": {"system": SYSTEM, "hero_prompt": HERO_PROMPT, "prompt": PROMPT,
-           "before": BEFORE, "narrator": "the narrator",
+           "before": BEFORE, "lean": LEAN, "met": "met", "heard": "heard",
+           "narrator": "the narrator",
            "main": "the main character", "unlinked": "not yet connected to %s"},
     "fr": {"system": SYSTEM_FR, "hero_prompt": HERO_PROMPT_FR, "prompt": PROMPT_FR,
-           "before": BEFORE_FR, "narrator": "le narrateur",
+           "before": BEFORE_FR, "lean": LEAN_FR, "met": "rencontré",
+           "heard": "évoqué", "narrator": "le narrateur",
            "main": "le personnage principal", "unlinked": "pas encore lié à %s"},
 }
 NARRATORS = {"the narrator", "le narrateur", "la narratrice"}
@@ -338,37 +369,69 @@ class RecapStage(Stage):
         words = TEXT[lang]
         if lang != "en":
             ctx.note("recaps written in %s" % {"fr": "French"}.get(lang, lang))
+        answers = _Answers(ctx.path, getattr(ctx.provider, "model", ""),
+                           enabled=getattr(rc, "resume", True))
+        if answers.got:
+            ctx.note("resuming: %d answers kept from an earlier run" % len(answers.got))
         ctx.report("finding the main character (%d passages to go)" % len(passages))
-        hero = _hero(ctx, docs, lang)
+        hero = _hero(ctx, docs, lang, answers)
         ctx.note("main character: %s" % hero)
+        lean = bool(getattr(rc, "lean_cast", False)) and rc.cast
 
-        def one(item):
+        def one(item, known=None):
             order, path, label, paras = item
             text = "\n\n".join(t for _n, t in paras)
             tail = lookup.get(id(item), "")
             before = words["before"].format(text=tail) if tail else ""
+            if known:
+                listed = "\n".join("- %s (%s): %s" % (n, words[st], rel or "?")
+                                    for n, (st, rel) in list(known.items())[-80:])
+                before = words["lean"].format(known=listed, hero=hero).lstrip() + "\n" + before
+            prompt = words["prompt"].format(hero=hero, text=text[:16000], before=before)
             try:
-                reply = ctx.provider.complete(
-                    words["prompt"].format(hero=hero, text=text[:16000], before=before),
-                    system=words["system"])
+                reply = answers.ask(ctx.provider, prompt, words["system"],
+                                    usable=lambda t: any(_parse(t)))
             except Exception as exc:                        # noqa: BLE001
                 ctx.log.debug("    recap %s:%d failed: %s", path, paras[0][0], exc)
                 return None
-            summary, people = _parse(reply.text)
+            summary, people = _parse(reply)
             if not (summary or people):
-                unread.append(reply.text)
+                unread.append(reply)
                 return None
+            if known:
+                people = _with_known(people, known, paras)
             return (item, summary, people)
 
         unread: list[str] = []
         workers = max(1, min(ctx.config.ai.concurrency, len(passages)))
-        got = []
+        results: list = [None] * len(passages)
+        known: dict = {}
+        done = 0
         ctx.report("passage 0/%d" % len(passages))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            for done, res in enumerate(pool.map(one, passages), 1):
-                ctx.report("passage %d/%d" % (done, len(passages)))
-                if res:
-                    got.append(res)
+            # In lean mode each batch is told who the batches before it met,
+            # so a batch of `workers` passages still runs at once.
+            step = workers if lean else len(passages)
+            for start in range(0, len(passages), step):
+                batch = range(start, min(start + step, len(passages)))
+                snapshot = dict(known) if lean else None
+                answered = pool.map(one, [passages[i] for i in batch],
+                                    [snapshot] * len(batch))
+                for i, res in zip(batch, answered, strict=True):
+                    done += 1
+                    ctx.report("passage %d/%d" % (done, len(passages)))
+                    results[i] = res
+                    if lean and res:
+                        _learn(known, res[2])
+        # A passage that timed out or came back garbled gets one more try,
+        # rather than leaving a hole in the recaps.
+        missed = [i for i, r in enumerate(results) if r is None]
+        if missed and len(missed) < len(passages):
+            ctx.note("retrying %d passage(s) that failed" % len(missed))
+            unread.clear()
+            for i in missed:
+                results[i] = one(passages[i], dict(known) if lean else None)
+        got = [r for r in results if r]
         if unread:
             ctx.note("%d of %d replies were not in the expected shape; the first began: %r"
                      % (len(unread), len(passages), unread[0][:300]))
@@ -387,6 +450,7 @@ class RecapStage(Stage):
                 ("main_character", hero), ("language", lang)]
         _embed(ctx.path, parts, people, chapters if legacy else [], cast,
                _spine(ctx.path), meta)
+        answers.forget()
 
         n_people = len({r[3] for r in people})
         heard = len({r[3] for r in people} - {r[3] for r in people if r[4] == "met"})
@@ -394,6 +458,89 @@ class RecapStage(Stage):
         ctx.note("%d passages over %d chapters; %d people (%d only heard of)"
                  % (len(parts), len(chapters), n_people, heard))
         return StageResult(message="%d recaps, %d people" % (len(chapters), n_people))
+
+
+# ------------------------------------------------------------ resuming
+
+
+class _Answers:
+    """The model's replies for one book, kept on disk until the book is written.
+
+    A book is only written once every passage is done, so a run stopped at
+    passage 150 of 200 used to throw all 150 away. Each usable reply is now
+    appended as it arrives, keyed by the exact request, and a rerun asks the
+    model only for what is missing. The file goes once the book is written.
+    """
+
+    def __init__(self, book: Path, model: str, enabled: bool = True):
+        root = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+        name = hashlib.sha1(str(Path(book).resolve()).encode("utf-8")).hexdigest()[:20]
+        self.path = root / "epubkit" / "recaps" / (name + ".jsonl")
+        self.model = model or ""
+        self.enabled = enabled
+        self.lock = threading.Lock()
+        self.got: dict[str, str] = {}
+        if not enabled:
+            return
+        try:
+            with open(self.path, encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        d = json.loads(line)
+                        self.got[d["k"]] = d["text"]
+                    except (ValueError, KeyError, TypeError):
+                        continue            # a line cut short by a crash
+        except OSError:
+            pass
+
+    def _key(self, prompt: str, system: str) -> str:
+        raw = "\0".join((self.model, system or "", prompt))
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def ask(self, provider, prompt: str, system: str, usable=None) -> str:
+        key = self._key(prompt, system)
+        if key in self.got:
+            return self.got[key]
+        text = provider.complete(prompt, system=system).text
+        if self.enabled and (usable is None or usable(text)):
+            with self.lock:
+                self.got[key] = text
+                try:
+                    self.path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(self.path, "a", encoding="utf-8") as fh:
+                        fh.write(json.dumps({"k": key, "text": text}) + "\n")
+                except OSError:
+                    pass                    # resuming is a bonus, not a need
+        return text
+
+    def forget(self) -> None:
+        try:
+            self.path.unlink()
+        except OSError:
+            pass
+
+
+def _learn(known: dict, people) -> None:
+    """Fold one passage's people into who the reader knows: met is for good."""
+    for name, status, _intro, rel in people:
+        was = known.pop(name, None)
+        if was and was[0] == "met":
+            status = "met"
+        known[name] = (status, rel or (was[1] if was else ""))
+
+
+def _with_known(people, known: dict, paras) -> list:
+    """Lean replies leave out people already known and unchanged. Put back
+    everyone known whom this passage names, as they stood, so the who's who
+    still counts how often each person turns up."""
+    listed = {n.lower() for n, *_ in people}
+    out = list(people)
+    for name, (status, rel) in known.items():
+        if name.lower() in listed:
+            continue
+        if _all_words_present(name, paras) and _first_mention(name, paras) is not None:
+            out.append((name, status, "", rel))
+    return out
 
 
 # ------------------------------------------------------------ the book
@@ -641,7 +788,7 @@ def _tail(paras, chars: int = 900) -> str:
 # ------------------------------------------------------------ the model
 
 
-def _hero(ctx: Context, docs, lang: str = "en") -> str:
+def _hero(ctx: Context, docs, lang: str = "en", answers=None) -> str:
     """The main character, judged from the whole book rather than its opening.
 
     Asking about the opening alone named "The Prime Minister" as the lead of
@@ -669,10 +816,10 @@ def _hero(ctx: Context, docs, lang: str = "en") -> str:
         "From %s:\n%s" % (label, " ".join(t for _n, t in paras)[:1600])
         for _o, _p, label, paras in picks)
     try:
-        reply = ctx.provider.complete(
-            words["hero_prompt"].format(names=", ".join(candidates), text=extracts),
-            system=words["system"])
-        name = reply.text.strip().splitlines()[0].strip(" .\"'*")
+        prompt = words["hero_prompt"].format(names=", ".join(candidates), text=extracts)
+        reply = (answers.ask(ctx.provider, prompt, words["system"]) if answers
+                 else ctx.provider.complete(prompt, system=words["system"]).text)
+        name = reply.strip().splitlines()[0].strip(" .\"'*")
     except Exception:                                       # noqa: BLE001
         name = ""
     if name.lower() in NARRATORS:

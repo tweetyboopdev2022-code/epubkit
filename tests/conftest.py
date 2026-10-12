@@ -100,3 +100,9 @@ def no_ambient_config(monkeypatch):
     for var in list(__import__("os").environ):
         if var.startswith("EPUBKIT_") or var in ("RECAP_ENDPOINT", "RECAP_MODEL"):
             monkeypatch.delenv(var, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _private_cache(tmp_path_factory, monkeypatch):
+    """Recap answers kept for resuming go to a throwaway folder, not ~/.cache."""
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path_factory.mktemp("cache")))

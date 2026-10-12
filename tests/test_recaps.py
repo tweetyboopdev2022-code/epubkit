@@ -563,3 +563,71 @@ def test_french_names_and_replies_are_understood():
             for i in range(3)]
     names = R._recurring_names(docs)
     assert "Émile" in names and "Monsieur" not in names
+
+
+# -- speed and resuming ---------------------------------------------------
+
+def test_a_stopped_run_resumes_instead_of_starting_over(tmp_path):
+    ch = ["MARK%d %s" % (i, FILLER) for i in range(40)]
+    book = build(tmp_path / "b.kepub.epub", [ch])
+
+    class Stops(Fake):
+        def complete(self, prompt, system=None, **kw):
+            if len(self.calls) == 4:
+                raise KeyboardInterrupt          # Ctrl-C, a reboot
+            return super().complete(prompt, system)
+
+    import pytest
+    with pytest.raises(KeyboardInterrupt):
+        run(tmp_path, book, Stops(), **{"ai.concurrency": 1})
+    again = Fake()
+    run(tmp_path, book, again, **{"ai.concurrency": 1})
+    total = len(rows(book, "parts.tsv"))
+    # the four passages answered before the stop are not asked again
+    assert total > 5 and len(again.calls) == total - 4
+    assert not any(R._Answers(book, "").path.parent.glob("*.jsonl"))
+
+
+def test_a_failed_passage_gets_a_second_try(tmp_path):
+    ch = ["MARK%d %s" % (i, FILLER) for i in range(12)]
+    book = build(tmp_path / "b.kepub.epub", [ch])
+
+    class Flaky(Fake):
+        failed = False
+
+        def complete(self, prompt, system=None, **kw):
+            if "MARK5 " in prompt.split("Passage:")[-1] and not self.failed:
+                self.failed = True
+                raise TimeoutError("gemma went quiet")
+            return super().complete(prompt, system)
+
+    run(tmp_path, book, Flaky(), **{"ai.concurrency": 1})
+    marks = {int(re.search(r"passage (\d+)", p[4]).group(1)) for p in rows(book, "parts.tsv")}
+    with zipfile.ZipFile(book) as z:
+        paras = R._paragraphs(z.read("OEBPS/Text/ch1.xhtml"))
+    seg = [s for s in R._segments(paras, 350 * 6)]
+    holder = next(i for i, s in enumerate(seg) if any("MARK5 " in t for _n, t in s))
+    first = int(re.search(r"MARK(\d+)", seg[holder][0][1]).group(1))
+    assert first in marks
+
+
+def test_lean_cast_asks_only_for_news_but_still_counts_everyone(tmp_path):
+    ch = ["MARK%d Tam waited by the door. %s" % (i, FILLER) for i in range(12)]
+    book = build(tmp_path / "b.kepub.epub", [ch])
+
+    class Lean(Fake):
+        def complete(self, prompt, system=None, **kw):
+            # a lean reply leaves Tam out once the reader knows him
+            self.cast = {} if "already knows" in prompt else {
+                "Tam": "Tam | met | a man by the door | Wren's brother"}
+            return super().complete(prompt, system)
+
+    fake = Lean()
+    run(tmp_path, book, fake, **{"ai.concurrency": 1, "recaps.lean_cast": True})
+    passages = [p for p in fake.calls if "Passage:" in p]
+    assert "already knows" not in passages[0]
+    assert all("- Tam (met): Wren's brother" in p for p in passages[1:])
+    tam = [r for r in rows(book, "people.tsv") if r[3] == "Tam"]
+    assert tam and tam[0][4] == "met"
+    # the count rides on the kept rows; seen in every passage is still known
+    assert len(passages) > 1

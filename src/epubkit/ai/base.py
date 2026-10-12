@@ -45,13 +45,16 @@ class Provider:
 
     def __init__(self, model: str, endpoint: str, api_key: str | None = None,
                  timeout: int = 180, max_tokens: int = 1024,
-                 temperature: float = 0.2):
+                 temperature: float = 0.2, context: int = 0,
+                 keep_alive: str = ""):
         self.model = model
         self.endpoint = endpoint.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.context = context
+        self.keep_alive = keep_alive
 
     # -- public ---------------------------------------------------------
 
@@ -97,6 +100,8 @@ class Provider:
                                               **headers})
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                if payload.get("stream"):
+                    return _joined(resp)
                 return json.loads(resp.read().decode("utf-8", "replace"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:400]
@@ -117,3 +122,33 @@ class Provider:
                 "cannot reach %s at %s (%s). If this is a local model, check "
                 "the server is running and the endpoint is right."
                 % (self.name, self.endpoint, exc.reason)) from exc
+
+
+def _joined(resp) -> dict:
+    """A streamed Ollama reply (one JSON object per line) as one object.
+
+    Streaming is what makes the timeout mean "the model went quiet" rather
+    than "the answer took long": the socket timeout applies to each read, and
+    a model that is writing sends a token every fraction of a second. Without
+    it a long but healthy answer was cut off at the timeout, retried from
+    scratch, and finally dropped.
+    """
+    out: dict = {}
+    text, thinking = [], []
+    for line in resp:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            part = json.loads(line.decode("utf-8", "replace"))
+        except ValueError:
+            continue
+        if part.get("error"):
+            return {"error": part["error"]}
+        text.append(part.get("response") or "")
+        thinking.append(part.get("thinking") or "")
+        out.update({k: v for k, v in part.items() if k not in ("response", "thinking")})
+    out["response"] = "".join(text)
+    if any(thinking):
+        out["thinking"] = "".join(thinking)
+    return out

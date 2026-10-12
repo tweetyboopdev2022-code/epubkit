@@ -173,3 +173,24 @@ def test_nothing_but_thinking_is_an_error_not_an_empty_recap(monkeypatch):
                                                 "thinking": "hmm, hmm, hmm"})
     with pytest.raises(AIError, match="reasoning and no answer"):
         p.complete("x", retries=1)
+
+
+def test_ollama_asks_for_a_context_that_fits_and_streams(monkeypatch):
+    seen = {}
+    p = OllamaProvider("gemma2:9b", "http://localhost:11434", context=8192,
+                       keep_alive="30m")
+    monkeypatch.setattr(p, "_post", lambda u, pl, h: seen.update(pl) or {"response": "ok"})
+    p.complete("x")
+    assert seen["options"]["num_ctx"] == 8192
+    assert seen["keep_alive"] == "30m" and seen["stream"] is True
+
+
+def test_a_streamed_reply_is_joined():
+    from epubkit.ai.base import _joined
+    lines = [b'{"response":"SUMMARY: Ada","done":false}\n',
+             b'{"response":" left.","done":false}\n', b"\n",
+             b'{"response":"","done":true,"prompt_eval_count":12,"eval_count":3}\n']
+    out = _joined(iter(lines))
+    assert out["response"] == "SUMMARY: Ada left."
+    assert out["prompt_eval_count"] == 12 and "thinking" not in out
+    assert _joined(iter([b'{"error":"model not found"}\n']))["error"] == "model not found"
