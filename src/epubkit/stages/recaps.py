@@ -1416,12 +1416,17 @@ def audit(book: Path) -> dict:
                         m = re.search(r'name="calibre:series" content="([^"]*)"', opf) or \
                             re.search(r'property="belongs-to-collection"[^>]*>([^<]*)<', opf)
                         series = html.unescape(m.group(1)) if m else ""
-                    if series and here + "people.tsv" in names:
-                        firsts = {_first_name(r[3]) for r in people if len(r) > 4}
+                    if series and here + "people.tsv" in names and \
+                            out["main_character"].lower() not in NARRATORS:
+                        # Only a person's full name in the series title counts
+                        # ("Detective Gina Harte", "Scot Harvath"). One shared
+                        # word was too eager: "Narnia" the place, "Witcher" the
+                        # title and "Maze" all flagged books for nothing.
                         words = _series_words(series)
-                        lead = _first_name(out["main_character"])
-                        named = words & firsts
-                        out["lead_off"] = bool(named) and lead not in words
+                        lead = set(_series_words(out["main_character"]))
+                        named = [n for n in (_series_words(r[3]) for r in people if len(r) > 4)
+                                 if len(n & words) >= 2]
+                        out["lead_off"] = bool(named) and not any(lead & n for n in named)
             elif here + "recaps.tsv" in names:
                 out["kind"] = "chapters"
                 out["chapters"] = len(rows("recaps.tsv"))

@@ -647,6 +647,9 @@ def test_a_series_title_word_like_the_is_not_a_wrong_lead(tmp_path):
     # a series that really is named after someone else still counts
     _set_series(book, "The White Witch Saga")
     assert R.audit(book)["lead_off"] is True
+    # but one shared word, like a place in the title, does not
+    _set_series(book, "The Witch Wars")
+    assert R.audit(book)["lead_off"] is False
 
 
 def _set_series(book, series):
