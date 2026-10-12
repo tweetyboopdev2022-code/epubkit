@@ -67,6 +67,15 @@ class AIConfig:
     temperature: float = 0.2
     #: how many chapters to summarise concurrently
     concurrency: int = 2
+    #: Ollama only: tokens the model reads and writes per request (num_ctx).
+    #: Ollama's own default (2048 or 4096) is smaller than a recap prompt, and
+    #: it silently cuts the START of a prompt that does not fit - the rules
+    #: and the answer format. 8192 is gemma2's maximum; each request slot
+    #: costs memory in proportion. 0 leaves it to Ollama.
+    context: int = 8192
+    #: Ollama only: how long the model stays loaded after a request, so it is
+    #: not reloaded between books. "" leaves it to Ollama (5 minutes).
+    keep_alive: str = "30m"
 
     def resolved_model(self) -> str:
         return self.model or DEFAULT_MODEL.get(self.provider, "")
@@ -152,6 +161,13 @@ class RecapConfig:
     #: who the relationships are described against. Empty: worked out from
     #: the book. Set it when a run is limited to one book or one series
     main_character: str = ""
+    #: keep each passage's answer on disk until the book is written, so a run
+    #: that is stopped picks up where it left off instead of starting over
+    resume: bool = True
+    #: ask the model only for people who are new, met for the first time, or
+    #: whose role changed, rather than everyone again in every passage. Less
+    #: for the model to write; passages then go in batches of ai.concurrency
+    lean_cast: bool = False
     #: auto | en | fr. Auto reads the book: a French book gets French prompts
     #: and French wording throughout, an English one English
     language: str = "auto"
