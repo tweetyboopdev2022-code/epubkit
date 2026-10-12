@@ -438,7 +438,7 @@ def _cmd_recaps(args, cfg: Config, log) -> int:
     for b in books:
         a = R.audit(b)
         if a["kind"] == "passages" and a["format"] >= R.FORMAT and not args.force \
-                and not a.get("lead_off"):
+                and not a.get("lead_off") and not a.get("lang_off"):
             continue
         todo.append(b)
     skipped = len(books) - len(todo)
@@ -481,6 +481,8 @@ def _recap_audit(books, R) -> int:
             kind = "passages (old)"
         elif kind == "passages" and a.get("lead_off"):
             kind = "wrong lead"
+        elif kind == "passages" and a.get("lang_off"):
+            kind = "wrong language"
         kinds[kind] = kinds.get(kind, 0) + 1
         rows.append((kind, a))
     print("%-16s %6s %6s %7s %8s %9s  %s" % ("recaps", "parts", "people", "heard", "recap KB",
@@ -498,6 +500,7 @@ def _recap_audit(books, R) -> int:
         "chapters": "whole-chapter recaps, from gen_recaps.py",
         "passages (old)": "passage recaps in an earlier layout",
         "wrong lead": "written around the wrong main character; redone on the next run",
+        "wrong language": "not in the book's own language (French); redone on the next run",
         "passages": "current: up to the page, with who you have met and heard of",
     }
     for k, n in sorted(kinds.items(), key=lambda kv: -kv[1]):
