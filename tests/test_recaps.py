@@ -466,3 +466,100 @@ def test_a_name_broken_off_mid_word_is_not_a_person():
     paras = [(1, "He said Lord Vol\u2014 and stopped. Vol\u2014 again.")]
     assert R._cut_off("Lord Vol", paras)
     assert not R._cut_off("Fudge", [(1, "Fudge said.")])
+
+
+# -- language ---------------------------------------------------------------
+
+FILLER_FR = ("La route continuait et la pluie tombait sur les collines, mais elle "
+             "avançait dans le froid avec son frère qui ne disait rien. ") * 4
+
+
+class FakeFr:
+    """Answers in French, the way the French prompt asks."""
+
+    def __init__(self, cast=None):
+        self.cast = cast or {}
+        self.calls = []
+
+    def complete(self, prompt, system=None, **kw):
+        self.calls.append((prompt, system))
+        if "Qui en est le personnage principal" in prompt:
+            return type("R", (), {"text": "Hélène"})()
+        passage = prompt.split("Passage :", 1)[1]
+        people = [line for name, line in self.cast.items() if name in passage]
+        text = "RÉSUMÉ : Hélène marchait sous la pluie.\nPERSONNAGES :\n%s" % "\n".join(people)
+        return type("R", (), {"text": text})()
+
+
+def french_book(tmp_path):
+    c1 = ["Ce matin-là, Hélène quitta la maison avec Tam. " + FILLER_FR] + [FILLER_FR] * 3
+    c2 = ["Loin de là, le juge Morel relisait une lettre. " + FILLER_FR] + [FILLER_FR] * 3
+    # labelled "en", as converted books often are: the text decides
+    return build(tmp_path / "fr.kepub.epub", [c1, c2])
+
+
+def test_a_french_book_is_recapped_entirely_in_french(tmp_path):
+    book = french_book(tmp_path)
+    fake = FakeFr({
+        "Tam": "Tam | rencontré | un jeune homme trempé | le frère d'Hélène",
+        "Hélène": "Hélène | rencontré | une jeune femme pressée | l'héroïne",
+        "Morel": "Morel | rencontré | un juge qui lit une lettre | "
+                 "ami d'Hélène, un juge de la ville",
+    })
+    run(tmp_path, book, fake)
+    # every prompt went out in French
+    assert fake.calls and all("français" in (sys or "") for _p, sys in fake.calls)
+    assert not any("Who is its main character" in p for p, _s in fake.calls)
+    parts = rows(book, "parts.tsv")
+    assert parts and all("pluie" in p[4] for p in parts)
+    people = {r[3]: r for r in rows(book, "people.tsv")}
+    assert people["Tam"][4] == "met"                       # rencontré
+    assert people["Hélène"][6] == "le personnage principal"
+    # a passage without Hélène cannot show a tie to her; said in French
+    assert people["Morel"][6].startswith("pas encore lié à Hélène")
+    meta = dict(r[:2] for r in rows(book, "meta.tsv"))
+    assert meta["language"] == "fr" and meta["main_character"] == "Hélène"
+    assert R.audit(book)["lang_off"] is False
+
+
+def test_an_english_book_stays_english(tmp_path):
+    ch = ["MARK%d %s" % (i, FILLER) for i in range(4)]
+    book = build(tmp_path / "b.kepub.epub", [ch])
+    fake = Fake()
+    run(tmp_path, book, fake)
+    assert all("RÉSUMÉ" not in p for p in fake.calls)
+    assert dict(r[:2] for r in rows(book, "meta.tsv"))["language"] == "en"
+    assert R.audit(book)["lang_off"] is False
+
+
+def test_french_recaps_from_before_french_support_are_redone(tmp_path):
+    book = french_book(tmp_path)
+    run(tmp_path, book, Fake(), **{"recaps.language": "en"})
+    a = R.audit(book)
+    assert a["kind"] == "passages" and a["lang_off"] is True
+
+
+def test_language_setting_and_label(tmp_path):
+    fr = "Elle était dans la cuisine avec les enfants et ne disait rien pour une fois. " * 8
+    en = "She was in the kitchen with the children and said nothing for once. " * 8
+    assert R._language("auto", fr, "<dc:language>en</dc:language>") == "fr"
+    assert R._language("auto", en, "<dc:language>fr</dc:language>") == "en"
+    assert R._language("auto", "", "<dc:language>fr-FR</dc:language>") == "fr"
+    assert R._language("fr", en, "") == "fr"
+    # a Spanish book is not taken for French; the English prompt asks for its own language
+    es = "Ella estaba en la cocina con los niños y no decía nada por una vez. " * 8
+    assert R._language("auto", es, "<dc:language>es</dc:language>") == "en"
+
+
+def test_french_names_and_replies_are_understood():
+    s, people = R._parse("RÉSUMÉ : Ils partirent.\nPERSONNAGES :\n"
+                         "d'Artagnan | rencontré | un jeune Gascon | ami de Hélène\n"
+                         "« Madame Bonacieux » | évoqué | une lingère | pas encore liée")
+    assert s == "Ils partirent."
+    assert people[1][0] == "Madame Bonacieux" and people[1][1] == "heard"
+    assert R._individual("d'Artagnan") and R._individual("Le Duc de Guise")
+    assert not R._individual("La famille Morel")
+    docs = [(i, "c%d" % i, "", [(0, "Ce jour-là, Hélène et Émile virent Monsieur Dupont.")])
+            for i in range(3)]
+    names = R._recurring_names(docs)
+    assert "Émile" in names and "Monsieur" not in names

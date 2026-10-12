@@ -8,11 +8,13 @@ that person's role has been revealed.
 import re
 import sys
 
-TITLES = r"^(?:professor|prof\.?|mr\.?|mrs\.?|miss|ms\.?|dr\.?|uncle|aunt|madame|madam|mme\.?|sir|lady|lord)\s+"
+TITLES = (r"^(?:professor|prof\.?|mr\.?|mrs\.?|miss|ms\.?|dr\.?|uncle|aunt|madame|madam|mme\.?|sir|lady|lord|"
+          r"monsieur|m\.|mademoiselle|mlle\.?|docteur|oncle|tante|ma[iî]tre)\s+")
 # Mr/Mrs/Miss/Aunt/Uncle mark a DIFFERENT member of the same family, so
 # "Mrs. Finnigan" must not collapse into "Seamus Finnigan". Professor and
 # Dr are roles the same person also answers to, so those still collapse.
-FAMILY = r"^(?:mr\.?|mrs\.?|miss|ms\.?|uncle|aunt)\s+"
+FAMILY = (r"^(?:mr\.?|mrs\.?|miss|ms\.?|uncle|aunt|"
+          r"monsieur|m\.|madame|mme\.?|mademoiselle|mlle\.?|oncle|tante)\s+")
 
 GENERIC = {
     "dementor", "muggle", "wizard", "witch", "goblin", "elf", "house-elf",
@@ -21,17 +23,20 @@ GENERIC = {
     "villager", "guard", "boy", "girl", "man", "woman", "narrator",
     "death eater", "ministry", "order", "mother", "father", "sister",
     "brother", "aunt", "uncle", "cousin", "friend", "neighbour", "neighbor",
+    "narrateur", "narratrice", "mère", "père", "sœur", "frère", "tante", "oncle",
+    "cousine", "ami", "amie", "voisin", "voisine", "garçon", "fille", "homme",
+    "femme", "professeur", "élève", "garde", "fantôme", "sorcier", "sorcière",
 }
 
 
 def split_people(name):
-    return [p.strip() for p in re.split(r"\s+and\s+|\s*&\s*", name) if p.strip()]
+    return [p.strip() for p in re.split(r"\s+(?:and|et)\s+|\s*&\s*", name) if p.strip()]
 
 
 def canon(name):
     n = name.strip().rstrip(".,;:")
     # "The Prime Minister" and "Prime Minister" are the one man
-    n = re.sub(r"^the\s+", "", n, flags=re.I)
+    n = re.sub(r"^(?:the|le|la|les)\s+|^l['’]", "", n, flags=re.I)
     return re.sub(TITLES, "", n, flags=re.I).strip()
 
 
