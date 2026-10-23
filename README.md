@@ -223,6 +223,19 @@ manifest, not the spine, so they never interrupt reading, and add about 1% to
 a novel. On the Kobo, `recap.sh` also quotes the line your page begins on,
 lifted straight out of the book.
 
+Books in a series share a **series memory**: one JSON file per series in
+`~/.local/share/epubkit/series/` (`recaps.series_dir`) holding who everyone is
+to the main character, book by book, and a short story of each book. When a
+book is done it is folded in; book N is only ever given what books before N
+put there, so a rerun of book 3 after book 5 is as spoiler-safe as the first.
+Open the file to correct someone: a non-empty `"fixed"` line for a person wins
+in every book, `"aliases"` ties other names to them, and `"terms"` explains
+the series' own words. Series books are done in reading order. Inside a book,
+each passage is also told who the reader has met so far
+(`recaps.running_memory`), and a book told as "I" by its main character is
+recognised (`recaps.first_person`), so a scene without the lead's printed name
+no longer cuts everyone's tie to them.
+
 `epubkit recaps` rewrites books where they are, so it can run over a library
 a server is already serving: before a book is written, every file inside it
 other than the recaps is compared byte-for-byte with the original, and the

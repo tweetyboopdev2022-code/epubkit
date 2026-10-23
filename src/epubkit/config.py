@@ -171,6 +171,23 @@ class RecapConfig:
     #: auto | en | fr. Auto reads the book: a French book gets French prompts
     #: and French wording throughout, an English one English
     language: str = "auto"
+    #: tell each passage who the reader has met so far in this book, and who
+    #: they are, so the who's who builds on itself instead of starting over
+    #: every few pages. Passages then go in batches of ai.concurrency
+    running_memory: bool = True
+    #: also give each passage the last few recaps, and the story so far from
+    #: the series memory. Off: only people are passed on, and the recap text
+    #: itself is written as before
+    running_story: bool = False
+    #: keep a memory file for each series (who is who to the main character,
+    #: the story so far) and give each book what the books before it built.
+    #: Needs the book's series and number; see epubkit/series_memory.py
+    series_memory: bool = True
+    #: where those files live; empty: ~/.local/share/epubkit/series
+    series_dir: str = ""
+    #: auto | yes | no - is the book told as "I" by its main character?
+    #: Auto reads the narration with the dialogue taken out
+    first_person: str = "auto"
 
 
 @dataclass

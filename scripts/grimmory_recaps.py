@@ -307,6 +307,9 @@ def cmd_run(args) -> int:
             log(b, "skipped", "not a readable zip")
             continue
         todo.append((root, b))
+    # a series in order: each book is written with what the books before it
+    # put in the series memory
+    todo = R.reading_order(todo)
     if args.limit:
         todo = todo[:args.limit]
     say("%d books in the library, %d to do%s." % (
