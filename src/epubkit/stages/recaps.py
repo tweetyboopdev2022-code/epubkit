@@ -585,6 +585,14 @@ class RecapStage(Stage):
                 results[i] = one(passages[i], dict(known) if (lean or running) else None,
                                  earlier_than(i))
         got = [r for r in results if r]
+        lost = len(passages) - len(got)
+        if got and lost > max(2, len(passages) // 20):
+            # The model went away partway (Ollama was stopped two minutes into
+            # DCC 1, and 146 of 163 passages failed): writing what came back
+            # would swap a full who's who for a stub. Leave the book as it is.
+            ctx.note("%d of %d passages failed; the book is left as it was"
+                     % (lost, len(passages)))
+            return StageResult(ok=False, message="too many passages failed")
         if unread:
             ctx.note("%d of %d replies were not in the expected shape; the first began: %r"
                      % (len(unread), len(passages), unread[0][:300]))

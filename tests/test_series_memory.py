@@ -164,3 +164,35 @@ def test_one_scene_does_not_unmake_who_someone_is():
         "Carl's cat, now a Princess"
     # with nothing known, an unshown tie is still struck out
     assert R._settle_tie("Carl's friend", "Carl", False, "").startswith("not yet connected")
+
+
+def test_a_book_is_left_alone_when_the_model_goes_away(tmp_path):
+    """Ollama was stopped two minutes into a run; the book was still written
+    with 17 of its 163 passages, and the memory built from them."""
+    import logging
+
+    from epubkit.config import Config
+    from epubkit.stages.base import Context
+    from epubkit.state import BookRecord
+
+    ch = ["MARK%d Tam waited by the door. %s" % (i, FILLER) for i in range(40)]
+    book = build(tmp_path / "Saga 01 - One - A.kepub.epub", [ch])
+    _set_series(book, "Saga")
+    before = book.read_bytes()
+
+    class Dies(Fake):
+        def complete(self, prompt, system=None, **kw):
+            if len([c for c in self.calls if "Passage:" in c]) >= 2:
+                raise ConnectionError("connection refused")
+            return super().complete(prompt, system)
+
+    cfg = Config.load(None, {"source": tmp_path, "output": tmp_path / "o",
+                             "recaps.min_chars": 100, "recaps.passage_words": 350,
+                             "recaps.series_dir": str(tmp_path / "series"),
+                             "recaps.main_character": "Wren", "ai.concurrency": 1})
+    (tmp_path / "work").mkdir()
+    ctx = Context(config=cfg, record=BookRecord(source=str(book)), path=book,
+                  work=tmp_path / "work", log=logging.getLogger("t"), provider=Dies())
+    assert not R.RecapStage().run(ctx).ok
+    assert book.read_bytes() == before
+    assert not (tmp_path / "series").exists()
