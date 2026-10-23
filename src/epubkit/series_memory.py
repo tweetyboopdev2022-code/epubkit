@@ -155,8 +155,13 @@ class Memory:
         for name, desc in people.items():
             if not desc:
                 continue
-            entry = ppl.get(name) or self._alias_of(name)
+            entry = ppl.get(name)
             if entry is None:
+                entry = self._alias_of(name)
+                if entry is not None:
+                    # the person's own name already said who they are here
+                    entry.setdefault("by_book", {}).setdefault(k, desc)
+                    continue
                 entry = ppl[name] = {"aliases": [], "fixed": "", "by_book": {}}
             entry.setdefault("by_book", {})[k] = desc
         self.data["books"] = dict(sorted(self.data["books"].items(), key=lambda kv: _num(kv[0])))
@@ -166,6 +171,15 @@ class Memory:
         for entry in self.data["people"].values():
             if low in (a.lower() for a in entry.get("aliases", [])):
                 return entry
+        # "Bea" for "Beatrice": a one-word name that begins exactly one
+        # person's first name becomes their alias
+        if len(name.split()) == 1 and len(low) >= 3:
+            hits = [(who, e) for who, e in self.data["people"].items()
+                    if who.split() and who.split()[0].lower() != low
+                    and who.split()[0].lower().startswith(low)]
+            if len(hits) == 1:
+                hits[0][1].setdefault("aliases", []).append(name)
+                return hits[0][1]
         return None
 
     def save(self) -> None:

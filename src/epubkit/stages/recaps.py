@@ -125,7 +125,10 @@ absent. Leave out groups, species, places, organisations and objects.
   If the reader's notes already describe this person, START from that
   description and add what this passage changes. Never write a vaguer or
   shorter description than the notes give, and never describe someone only
-  by what they did in this scene.
+  by what they did in this scene. Wrong: "clutching a potion, staring at
+  Carl"; "a person who suggested opening the door". Right: "Frank's
+  partner, a crawler who ambushed Carl"; "a fellow crawler in Carl's group,
+  a retired teacher".
   For {hero} themself write: the main character. For anyone not yet
   connected to {hero}, say so plainly ("not yet connected to {hero}").
 
@@ -216,7 +219,9 @@ groupes, les espèces, les lieux, les organisations et les objets.
   Si les notes du lecteur décrivent déjà cette personne, PARTEZ de cette
   description et ajoutez ce que ce passage change. N'écrivez jamais une
   description plus vague ou plus courte que celle des notes, et ne décrivez
-  jamais quelqu'un seulement par ce qu'il a fait dans cette scène.
+  jamais quelqu'un seulement par ce qu'il a fait dans cette scène. Faux :
+  « serrant une potion, fixant Carl ». Juste : « la compagne de Frank, une
+  candidate qui a tendu une embuscade à Carl ».
   Pour {hero} lui-même, écrivez : le personnage principal.
 
 {before}Passage :
@@ -302,8 +307,11 @@ WHO_PROMPT = """Here is how one character, {name}, was described at points
 through a book whose main character is {hero}, earliest first:
 {lines}
 
-In one line of 6 to 18 words, say who {name} is to {hero} and what they are,
-as of the END of the book. Use only the lines above. Answer with the line only.
+In one line of 6 to 18 words, say who {name} is to {hero} and what they are
+(their species, job or title), as of the END of the book. Use only the lines
+above. Some lines name other people: a species, job or title that a line
+gives to someone else is not {name}'s. Where lines disagree about what
+{name} is, go with what most of them say. Answer with the line only.
 """
 
 WHO_PROMPT_FR = """Voici comment un personnage, {name}, a été décrit au fil d'un
@@ -311,8 +319,11 @@ livre dont le personnage principal est {hero}, du plus ancien au plus récent :
 {lines}
 
 En une ligne de 6 à 18 mots, dites qui est {name} pour {hero} et ce qu'il ou
-elle est, à la FIN du livre. N'utilisez que les lignes ci-dessus. Répondez par
-la ligne seule.
+elle est (espèce, métier ou titre), à la FIN du livre. N'utilisez que les
+lignes ci-dessus. Certaines lignes nomment d'autres personnes : une espèce, un
+métier ou un titre qu'une ligne donne à quelqu'un d'autre n'est pas celui de
+{name}. Si les lignes se contredisent, suivez la majorité. Répondez par la
+ligne seule.
 """
 
 #: everything a recap run says in the book's own language
@@ -709,6 +720,8 @@ def _settle_tie(rel: str, hero: str, here: bool, known: str, lang: str = "en") -
         return bool(words) and bool(
             re.search(r"\b(%s)\b" % "|".join(map(re.escape, words)), t))
 
+    if known and _scene_only(rel):
+        return known
     if known and names_lead(known) and not names_lead(rel):
         # "a crawler in the room" after "Carl's cat and crawl partner": a
         # passing scene must not wipe who someone is
@@ -718,6 +731,68 @@ def _settle_tie(rel: str, hero: str, here: bool, known: str, lang: str = "en") -
     if known and names_lead(rel):
         return known
     return _unclaim(rel, hero, lang)
+
+
+_ROLE_LEAD = re.compile(
+    r"(?i)^(?:not yet connected to [^;,]+[;,]\s*|pas encore li[ée]e? [àa] [^;,]+[;,]\s*)")
+_VAGUE = re.compile(
+    r"(?i)^(?:a |an |the |someone |somebody |une? |quelqu'un )?"
+    r"(?:person|someone|somebody|man|woman|figure|individual|people|personne|homme|femme)?"
+    r"\s*(?:who|that|qui)\b")
+
+
+def _scene_only(rel: str) -> bool:
+    """A line that says what someone did in one scene, not who they are:
+    "clutching the skill potion to her chest, staring at Carl", "a person
+    who suggested opening the door"."""
+    t = _ROLE_LEAD.sub("", rel or "").strip()
+    if not t:
+        return False
+    first = t.split()[0].lower().strip(",;")
+    if first.endswith("ing") and first not in {"king", "viking", "darling", "sibling",
+                                                "ruling", "duckling", "something"}:
+        return True
+    return bool(_VAGUE.match(t))
+
+
+def _backed(line: str, lines, name: str, hero: str) -> bool:
+    """Every capitalised word in a written-up line is in the lines it came
+    from, and in most of them when the lines disagree: Donut came out "a
+    Bugaboo", a word the lines used for someone else."""
+    own = {w.lower() for w in (name + " " + hero).split()}
+    text = [t.lower() for t in lines]
+    for w in re.findall(r"(?<![\w'’])[A-Z][\w'’-]{2,}", line):
+        lw = w.lower().rstrip("'’s")
+        if lw in own or lw in _NOT_A_NAME:
+            continue
+        hits = sum(1 for t in text if lw in t)
+        if hits == 0 or (len(text) >= 3 and hits * 2 < len(text) and hits < 2):
+            return False
+    return True
+
+
+def _nicknames(names: dict, listed_together: set, hero: str) -> dict:
+    """"Bea" and "Beatrice" as one person: a one-word name that begins
+    exactly one other person's first name is that person, unless some
+    passage lists the two side by side (then they are two people)."""
+    shown = set(names.values())
+    firsts: dict[str, list[str]] = {}
+    for d in shown:
+        if d.split():
+            firsts.setdefault(d.split()[0].lower(), []).append(d)
+    remap = {}
+    for d in shown:
+        if len(d.split()) != 1 or len(d) < 3 or _is_hero(d, hero):
+            continue
+        low = d.lower()
+        longer = [x for f, xs in firsts.items() for x in xs
+                  if f != low and f.startswith(low)]
+        if len(longer) != 1 or _is_hero(longer[0], hero):
+            continue
+        if frozenset((d, longer[0])) in listed_together:
+            continue
+        remap[d] = longer[0]
+    return {raw: remap.get(d, d) for raw, d in names.items()}
 
 
 def _remember(ctx, memory, index, hero, first_person, parts, people, words) -> None:
@@ -748,7 +823,7 @@ def _remember(ctx, memory, index, hero, first_person, parts, people, words) -> N
                     name=who, hero=hero, lines="\n".join("- " + t for t in linked[-10:]))
                 got = provider.complete(prompt, system=words["system"]).text
                 got = _tidy(got.strip().splitlines()[0].strip(" -\"'*"), 20) if got.strip() else ""
-                if len(got.split()) >= 3:
+                if len(got.split()) >= 3 and _backed(got, linked[-10:], who, hero):
                     desc = got
             except Exception:                               # noqa: BLE001
                 pass
@@ -1470,6 +1545,11 @@ def _people_rows(got, hero, ctx, lang: str = "en", settled: bool = False):
             raw.append((_pos(order, end), (order, path, end, status, "rel", rel), name))
 
     names = _identities([(pos, name) for pos, _d, name in raw], ctx)
+    together = set()
+    for _item, _s, listed in got:
+        ns = sorted({names.get(n, n) for n, *_ in listed})
+        together.update(frozenset((a, b)) for i, a in enumerate(ns) for b in ns[i + 1:])
+    names = _nicknames(names, together, hero)
 
     rows, seen, met, said = [], set(), set(), {}
     for _p, (order, path, para, status, kind, text), name in sorted(raw, key=lambda r: r[0]):
@@ -1484,6 +1564,9 @@ def _people_rows(got, hero, ctx, lang: str = "en", settled: bool = False):
                 rows.append((order, path, para, who, "met", said[who]))
                 met.add(who)
             continue
+        if kind == "rel" and who in said and _scene_only(text) and \
+                not _scene_only(said[who]):
+            continue        # one scene does not replace who they are
         seen.add(who)
         said[who] = text
         if status == "met":

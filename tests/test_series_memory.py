@@ -196,3 +196,41 @@ def test_a_book_is_left_alone_when_the_model_goes_away(tmp_path):
     assert not R.RecapStage().run(ctx).ok
     assert book.read_bytes() == before
     assert not (tmp_path / "series").exists()
+
+
+# -- weak spots found in the first real run (DCC 1 on Qwen) --------------------
+
+def test_a_scene_is_not_who_someone_is():
+    assert R._scene_only("not yet connected to Carl; clutching the skill potion "
+                         "to her chest, staring at Carl")
+    assert R._scene_only("a person who suggested opening the door")
+    assert not R._scene_only("Frank's partner, a crawler who ambushed Carl")
+    assert not R._scene_only("not yet connected to Carl; the town's magistrate")
+    known = "Frank's partner, a crawler"
+    assert R._settle_tie("staring at Carl", "Carl", True, known) == known
+
+
+def test_a_write_up_may_not_borrow_a_word_from_someone_else():
+    lines = ["Carl's cat, a talking show cat", "Carl's companion, a cat",
+             "Carl's cat, who met Mordecai, a Bugaboo"]
+    assert not R._backed("Carl's companion, a Bugaboo", lines, "Donut", "Carl")
+    assert R._backed("Carl's cat and companion", lines, "Donut", "Carl")
+    assert not R._backed("Carl's cat, a Wizard", lines, "Donut", "Carl")
+
+
+def test_a_short_name_is_the_longer_one_unless_both_are_listed():
+    names = {"Bea": "Bea", "Beatrice": "Beatrice", "Carl": "Carl", "Carlos": "Carlos"}
+    got = R._nicknames(names, set(), "Carl")
+    assert got["Bea"] == "Beatrice"
+    assert got["Carl"] == "Carl"          # the lead is never folded into anyone
+    apart = R._nicknames(names, {frozenset(("Bea", "Beatrice"))}, "Carl")
+    assert apart["Bea"] == "Bea"
+
+
+def test_the_memory_files_a_short_name_under_the_full_one(tmp_path):
+    mem = SM.Memory.open(tmp_path, "S")
+    mem.record_book(1, "One", "", {"Beatrice": "Carl's ex-girlfriend"})
+    mem.record_book(1, "One", "", {"Bea": "someone who advised Carl"})
+    assert "Bea" not in mem.data["people"]
+    assert mem.data["people"]["Beatrice"]["aliases"] == ["Bea"]
+    assert mem.data["people"]["Beatrice"]["by_book"]["1"] == "Carl's ex-girlfriend"
