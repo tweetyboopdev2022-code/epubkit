@@ -637,7 +637,8 @@ class RecapStage(Stage):
         if cast_only:
             parts = kept
         people = _people_rows(got, hero, ctx, lang, settled=True,
-                              series_name=view.name_of if view else None) if rc.cast else []
+                              series_name=view.name_of if view else None,
+                              series_lines=view.lines() if view else None) if rc.cast else []
         legacy = bool(getattr(rc, "legacy_files", False))
         chapters = _chapter_rows(parts)
         cast = _legacy_cast(people) if legacy else []
@@ -912,6 +913,7 @@ def _remember(ctx, memory, index, hero, first_person, parts, people, words) -> N
                     desc = got
             except Exception:                               # noqa: BLE001
                 pass
+        desc = _lasting(desc, linked)
         if desc:
             final[who] = desc
     summaries = [s for *_x, s in parts if s]
@@ -921,6 +923,33 @@ def _remember(ctx, memory, index, hero, first_person, parts, people, words) -> N
                        lead=hero, first_person=first_person)
     memory.save()
     ctx.note("series memory updated: %s (%d people)" % (memory.path, len(final)))
+
+
+_DEATH = re.compile(r"(?i)\b(?:deceased|dead|late|killed|décédée?|morte?|feue?)\b")
+_LEVEL = re.compile(r"(?i)\b(?:(an?|une?)\s+)?(?:level|niveau)[\s-]+(?:\d+|[a-z]+)\s+(?=\w)")
+
+
+def _lasting(desc: str, lines) -> str:
+    """What the next book may be told about someone. A level is only true
+    for a while (Katia stayed "level nine" for three books), and one line
+    calling someone dead is not enough: Mordecai was "deceased" from book 3 on
+    on the word of a single passage."""
+    if not desc:
+        return desc
+    if _DEATH.search(desc) and sum(1 for t in lines if _DEATH.search(t)) * 2 < len(lines):
+        desc = re.sub(r"(?i)\s*\b(?:deceased|late)\b", "", desc)
+        desc = re.sub(r"(?i),?\s*(?:who|that)\s+(?:is|was)\s+(?:now\s+)?dead\b.*$|"
+                      r",?\s*\b(?:killed|dead)\b.*$", "", desc)
+    def drop_level(m):
+        art = m.group(1) or ""
+        if art.lower() in ("a", "an"):
+            # "a level ten human" -> "a human", "a level nine angel" -> "an angel"
+            rest = desc[m.end():m.end() + 1].lower()
+            art = art[0] + ("n" if rest and rest in "aeiou" else "")
+        return art + " " if art else ""
+    desc = _LEVEL.sub(drop_level, desc)
+    desc = re.sub(r"\s{2,}", " ", desc).strip(" ,;")
+    return desc
 
 
 def _story(provider, summaries, hero, words, chunk: int = 9000) -> str:
@@ -1592,7 +1621,7 @@ _NOT_A_NAME = {"the", "mr", "mr.", "mrs", "mrs.", "miss", "ms", "ms.", "dr", "dr
 
 
 def _people_rows(got, hero, ctx, lang: str = "en", settled: bool = False,
-                 series_name=None):
+                 series_name=None, series_lines=None):
     """-> [(order, path, para, name, met|heard, description)], sorted by position.
 
     Two rows per person per passage at most:
@@ -1646,7 +1675,10 @@ def _people_rows(got, hero, ctx, lang: str = "en", settled: bool = False,
         for t in to.values():
             if t:
                 hits[t] = hits.get(t, 0) + 1
-        shown = {d: t for d, t in to.items() if t and hits[t] == 1}
+        # a name or alias the memory already holds is that person for sure:
+        # book 4 listed "Princess Donut" beside "Donut"
+        shown = {d: t for d, t in to.items()
+                 if t and (hits[t] == 1 or series_name(d, True) == t)}
         names = {raw: shown.get(d, d) for raw, d in names.items()}
 
     # the same words for two people in one passage are the model copying one
@@ -1656,6 +1688,9 @@ def _people_rows(got, hero, ctx, lang: str = "en", settled: bool = False,
         if kind == "rel" and text and names.get(name) and not _is_hero(name, hero):
             owners.setdefault((order, _tidy_key(text)), set()).add(names[name])
     shared = {k for k, who in owners.items() if len(who) > 1}
+    # someone else's remembered line is not this person's either: Ferdinand
+    # was handed Donut's hand-written one
+    theirs = {_tidy_key(d): who for d, who in (series_lines or {}).items()}
 
     rows, seen, met, said = [], set(), set(), {}
     for _p, (order, path, para, status, kind, text), name in sorted(raw, key=lambda r: r[0]):
@@ -1663,6 +1698,8 @@ def _people_rows(got, hero, ctx, lang: str = "en", settled: bool = False,
         if not who or not text:
             continue
         if kind == "rel" and (order, _tidy_key(text)) in shared:
+            continue
+        if kind == "rel" and theirs.get(_tidy_key(text), who) != who:
             continue
         if kind == "intro" and who in seen:
             # introduced long ago; but if this is where the reader first meets

@@ -262,14 +262,19 @@ class View:
     def __bool__(self) -> bool:
         return bool(self.people or self.stories or self.terms)
 
-    def name_of(self, name: str) -> str:
+    def name_of(self, name: str, exact: bool = False) -> str:
         """The name the earlier books knew this person by, so one person
-        keeps one name from book to book; "" when nobody or several fit."""
+        keeps one name from book to book; "" when nobody or several fit.
+        exact: only a remembered name or alias, never a likely variant."""
         low = name.lower().strip()
         for who, (_d, aliases, _n) in self.people.items():
             if low in [who.lower()] + [a.lower() for a in aliases]:
                 return who
-        return _one_match(name, self._entries)
+        return "" if exact else _one_match(name, self._entries)
+
+    def lines(self) -> dict[str, str]:
+        """Each remembered description -> whose it is."""
+        return {d: who for who, (d, _a, _n) in self.people.items() if d}
 
     def tie(self, name: str) -> str:
         """The remembered description of someone, by name or alias."""

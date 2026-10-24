@@ -10,6 +10,10 @@ import sys
 
 TITLES = (r"^(?:professor|prof\.?|mr\.?|mrs\.?|miss|ms\.?|dr\.?|uncle|aunt|madame|madam|mme\.?|sir|lady|lord|"
           r"monsieur|m\.|mademoiselle|mlle\.?|docteur|oncle|tante|ma[iî]tre)\s+")
+# Ranks a person gains or loses over a series: Princess, then Queen, Imogen;
+# "Crawler Bobby" in Dungeon Crawler Carl. Same person under each.
+RANKS = (r"^(?:(?:crown\s+|high\s+elf\s+)?(?:prince|princess|queen|king|emperor|empress)|"
+         r"duke|duchess|crawler|captain|commandant|prince|princesse|reine|roi)\s+")
 # Mr/Mrs/Miss/Aunt/Uncle mark a DIFFERENT member of the same family, so
 # "Mrs. Finnigan" must not collapse into "Seamus Finnigan". Professor and
 # Dr are roles the same person also answers to, so those still collapse.
@@ -37,7 +41,9 @@ def canon(name):
     n = name.strip().rstrip(".,;:")
     # "The Prime Minister" and "Prime Minister" are the one man
     n = re.sub(r"^(?:the|le|la|les)\s+|^l['’]", "", n, flags=re.I)
-    return re.sub(TITLES, "", n, flags=re.I).strip()
+    n = re.sub(TITLES, "", n, flags=re.I).strip()
+    stripped = re.sub(RANKS, "", n, flags=re.I).strip()
+    return stripped or n
 
 
 def singular(tok):

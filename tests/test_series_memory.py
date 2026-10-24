@@ -383,7 +383,8 @@ def test_a_book_uses_the_name_the_earlier_books_knew():
     got = [_passage(1, "Elle McGib froze the water near Carl.",
                     [("Elle McGib", "met", "a crawler", "Carl's ally, a Frost Maiden")])]
     rows = R._people_rows(got, "Carl", None, settled=True,
-                          series_name=lambda n: "Elle" if n.startswith("Elle") else "")
+                          series_name=lambda n, exact=False:
+                          "Elle" if n.startswith("Elle") and not exact else "")
     assert {r[3] for r in rows} == {"Elle"}
 
 
@@ -401,3 +402,52 @@ def test_a_moment_tacked_onto_a_role_is_cut():
                          "of the stairs") == ("Carl's acquaintance", True)
     assert R._drop_scene("Carl's friend, kind and caring") == \
         ("Carl's friend, kind and caring", False)
+
+
+# -- run 3 (DCC, names merged) ------------------------------------------------
+
+def test_a_name_the_memory_holds_joins_its_person_even_beside_them():
+    """Book 4 listed "Princess Donut" beside "Donut"; the memory knew the
+    alias, so they are one."""
+    mem = SM.Memory.open(None, "S")
+    mem.data["people"] = {"Donut": {"aliases": ["Princess Donut"], "fixed": "",
+                                    "by_book": {"1": "Carl's cat"}}}
+    view = mem.before(2)
+    got = [_passage(1, "Donut and Princess Donut and Carl.",
+                    [("Donut", "met", "a cat", "Carl's cat, angry"),
+                     ("Princess Donut", "met", "a cat", "Carl's cat, royal")])]
+    rows = R._people_rows(got, "Carl", None, settled=True, series_name=view.name_of)
+    assert {r[3] for r in rows} == {"Donut"}
+
+
+def test_ranks_do_not_split_a_person():
+    from epubkit.tools import dedupe_cast as D
+    got = D.identities([(1, "", "Imogen", ""), (2, "", "Princess Imogen", ""),
+                        (3, "", "Queen Imogen", ""), (4, "", "High Elf King Finian", ""),
+                        (5, "", "King Finian", ""), (6, "", "Crawler Bobby", ""),
+                        (7, "", "Bobby", "")])
+    assert len({got["Imogen"], got["Princess Imogen"], got["Queen Imogen"]}) == 1
+    assert got["High Elf King Finian"] == got["King Finian"]
+    assert got["Crawler Bobby"] == got["Bobby"]
+    assert SM.same_person("Empress D'Nadia", "Princess D'Nadia")
+
+
+def test_someone_elses_remembered_line_is_not_theirs():
+    fixed = "Carl's cat and his partner in the dungeon"
+    got = [_passage(1, "Ferdinand sat with Carl.",
+                    [("Ferdinand", "met", "a cat", fixed)])]
+    rows = R._people_rows(got, "Carl", None, settled=True,
+                          series_lines={fixed: "Donut"})
+    assert fixed not in {r[6] for r in rows}
+
+
+def test_the_memory_keeps_no_levels_and_no_lone_deaths():
+    lines = ["Carl's guide", "Carl's changeling guide", "Carl's guide and trainer",
+             "Carl's deceased guide"]
+    assert R._lasting("Carl's deceased changeling guide and trainer", lines) == \
+        "Carl's changeling guide and trainer"
+    assert R._lasting("Carl's companion, a level nine doppelganger", lines) == \
+        "Carl's companion, a doppelganger"
+    assert R._lasting("a level 9 angel", lines) == "an angel"
+    dead = ["killed by Quetzalcoatlus", "dead on the bridge", "a principal"]
+    assert "killed" in R._lasting("a principal killed by Quetzalcoatlus", dead)
