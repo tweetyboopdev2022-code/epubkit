@@ -636,7 +636,8 @@ class RecapStage(Stage):
                  for it, s, _p in got if s]
         if cast_only:
             parts = kept
-        people = _people_rows(got, hero, ctx, lang, settled=True) if rc.cast else []
+        people = _people_rows(got, hero, ctx, lang, settled=True,
+                              series_name=view.name_of if view else None) if rc.cast else []
         legacy = bool(getattr(rc, "legacy_files", False))
         chapters = _chapter_rows(parts)
         cast = _legacy_cast(people) if legacy else []
@@ -805,7 +806,8 @@ _SCENE_CLAUSE = re.compile(
     r"[,;]?\s+(?:who|that)\s+(?!leads\b|runs\b|owns\b|works\b|lives\b)\w+[^s\s]?s"
     r"\s+(?:on|about|from|at|into|with|the|a|an|her|his|their|blood|that|[A-Z])\S*.*$|"
     r"[,;]?\s+\w+ing\s+(?:on|in|at|behind|from|to|into|with|under|over|the|a|an|her|his|"
-    r"their|dying)\b.*$")
+    r"their|dying)\b.*$|"
+    r"[,;]\s+\w+\s+and\s+\w+ing\s+(?:on|in|at|the|a|an|her|his|their|[A-Z])\S*.*$")
 
 
 def _drop_scene(rel: str) -> tuple[str, bool]:
@@ -828,7 +830,14 @@ def _scene_only(rel: str) -> bool:
     if first.endswith("ing") and first not in {"king", "viking", "darling", "sibling",
                                                 "ruling", "duckling", "something"}:
         return True
+    # "awake and hugging Britney at the top of the stairs"
+    if re.match(r"(?i)^\w+,? and \w+ing\b", t):
+        return True
     return bool(_VAGUE.match(t))
+
+
+def _tidy_key(text: str) -> str:
+    return re.sub(r"\W+", " ", text or "").strip().lower()
 
 
 def _backed(line: str, lines, name: str, hero: str) -> bool:
@@ -1582,7 +1591,8 @@ _NOT_A_NAME = {"the", "mr", "mr.", "mrs", "mrs.", "miss", "ms", "ms.", "dr", "dr
                "tante", "professeur", "capitaine", "sainte", "père", "mère"}
 
 
-def _people_rows(got, hero, ctx, lang: str = "en", settled: bool = False):
+def _people_rows(got, hero, ctx, lang: str = "en", settled: bool = False,
+                 series_name=None):
     """-> [(order, path, para, name, met|heard, description)], sorted by position.
 
     Two rows per person per passage at most:
@@ -1627,11 +1637,32 @@ def _people_rows(got, hero, ctx, lang: str = "en", settled: bool = False):
         ns = sorted({names.get(n, n) for n, *_ in listed})
         together.update(frozenset((a, b)) for i, a in enumerate(ns) for b in ns[i + 1:])
     names = _nicknames(names, together, hero)
+    if series_name:
+        # one person, one name across the series: book 5 listed "Elle
+        # McGib" beside book 4's "Elle". Two people this book keeps apart
+        # are not merged by it, though.
+        to = {d: series_name(d) for d in set(names.values()) if not _is_hero(d, hero)}
+        hits: dict[str, int] = {}
+        for t in to.values():
+            if t:
+                hits[t] = hits.get(t, 0) + 1
+        shown = {d: t for d, t in to.items() if t and hits[t] == 1}
+        names = {raw: shown.get(d, d) for raw, d in names.items()}
+
+    # the same words for two people in one passage are the model copying one
+    # line onto both (Louis and Firas M in DCC 4); neither is told by it
+    owners: dict[tuple, set] = {}
+    for _p, (order, _path, _para, _st, kind, text), name in raw:
+        if kind == "rel" and text and names.get(name) and not _is_hero(name, hero):
+            owners.setdefault((order, _tidy_key(text)), set()).add(names[name])
+    shared = {k for k, who in owners.items() if len(who) > 1}
 
     rows, seen, met, said = [], set(), set(), {}
     for _p, (order, path, para, status, kind, text), name in sorted(raw, key=lambda r: r[0]):
         who = names.get(name)
         if not who or not text:
+            continue
+        if kind == "rel" and (order, _tidy_key(text)) in shared:
             continue
         if kind == "intro" and who in seen:
             # introduced long ago; but if this is where the reader first meets

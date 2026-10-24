@@ -83,12 +83,33 @@ def _resolver(rows):
             if is_person(person):
                 split.append((order, fname, person.strip().rstrip(".,;:"), desc))
 
+    # Chat handles cut names short: Dungeon Crawler Carl has "Elle McGib"
+    # for Elle McGibbons and "Imani C" for Imani Carter. A full name whose
+    # surname begins exactly one longer surname with the same first name is
+    # that person.
+    longs = {}
+    for _, _, name, _ in split:
+        k = key(name)
+        if " " in k:
+            first, last = k.split(" ", 1)
+            longs.setdefault(first, set()).add(last)
+    cut = {}
+    for first, lasts in longs.items():
+        for a in lasts:
+            longer = [b for b in lasts if b != a and b.startswith(a)]
+            if len(longer) == 1:
+                cut[first + " " + a] = first + " " + longer[0]
+
+    def ckey(name):
+        k = key(name)
+        return cut.get(k, k)
+
     full = {}
     for _, _, name, _ in split:
         toks = [singular(t) for t in canon(name).lower().split() if t]
         if len(toks) > 1:
             for t in (toks[0], toks[-1]):
-                full.setdefault(t, set()).add(key(name))
+                full.setdefault(t, set()).add(ckey(name))
 
 # If the model listed the short form and a full name as two entries in the
 # SAME chapter, it meant two people: Mrs. Finnigan and Seamus Finnigan.
@@ -117,7 +138,7 @@ def _resolver(rows):
                     continue
                 toks = [singular(t) for t in canon(other).lower().split() if t]
                 if len(toks) > 1 and tok in (toks[0], toks[-1]):
-                    rivals.add((key(sh), key(other)))
+                    rivals.add((key(sh), ckey(other)))
 
     def resolve(name):
         # A lone token is the same person as a full name containing it, but
@@ -127,7 +148,7 @@ def _resolver(rows):
             target = next(iter(full[toks[0]]))
             if (key(name), target) not in rivals:
                 return target
-        return key(name)
+        return ckey(name)
 
     display = {}
     for order, _, name, _ in split:

@@ -330,3 +330,74 @@ def test_keep_recaps_writes_them_where_a_book_has_none(tmp_path):
 
     run(tmp_path, book, Other(), **{"recaps.keep_recaps": True})
     assert rows(book, "parts.tsv") == before
+
+
+# -- name variants and shared lines (DCC run 2) -------------------------------
+
+def test_a_cut_short_chat_handle_is_the_full_name():
+    from epubkit.tools import dedupe_cast as D
+    got = D.identities([(1, "", "Imani", ""), (2, "", "Imani C", ""),
+                        (3, "", "Imani Carter", ""), (4, "", "Elle McGib", ""),
+                        (5, "", "Elle McGibbons", ""), (6, "", "Elle", "")])
+    assert len({got["Imani"], got["Imani C"], got["Imani Carter"]}) == 1
+    assert len({got["Elle"], got["Elle McGib"], got["Elle McGibbons"]}) == 1
+    # two surnames that both begin the short one: no telling which
+    two = D.identities([(1, "", "Frank Q", ""), (2, "", "Frank Quinn", ""),
+                        (3, "", "Frank Quartz", "")])
+    assert two["Frank Q"] == "Frank Q"
+
+
+def test_name_variants_are_one_person():
+    assert SM.same_person("Miss Beatrice", "Beatrice")
+    assert SM.same_person("Elle McGib", "Elle")
+    assert SM.same_person("Imani C", "Imani Carter")
+    assert SM.same_person("Chaco the Bard", "Chaco")
+    assert not SM.same_person("Grace Bautista", "Daniel Bautista")
+    assert not SM.same_person("Mrs. McGibbons", "Elle McGibbons")
+    assert not SM.same_person("Imani Carter", "Imani Cole")
+
+
+def test_the_memory_files_every_form_of_a_name_under_one_person(tmp_path):
+    mem = SM.Memory.open(tmp_path, "S")
+    mem.record_book(1, "One", "", {"Beatrice": "Carl's ex-girlfriend",
+                                   "Imani C": "Carl's ally", "Elle": "a Frost Maiden"})
+    mem.record_book(2, "Two", "", {"Miss Beatrice": "Donut's old owner",
+                                   "Imani": "Carl's ally, with wings",
+                                   "Elle McGib": "a level 17 Frost Maiden"})
+    ppl = mem.data["people"]
+    assert set(ppl) == {"Beatrice", "Imani C", "Elle"}
+    assert ppl["Elle"]["by_book"]["2"] == "a level 17 Frost Maiden"
+    view = mem.before(3)
+    assert view.name_of("Elle McGib") == "Elle"
+    assert view.tie("Miss Beatrice") == "Donut's old owner"
+    # two remembered Franks: a lone "Frank" is neither
+    mem.record_book(3, "Three", "", {"Frank Q": "a crawler", "Frank Smith": "a guard"})
+    assert mem.before(4).name_of("Frank") == ""
+
+
+def _passage(order, text, listed):
+    return ((order, "c%d.xhtml" % order, "Ch", [(0, text)]), "summary", listed)
+
+
+def test_a_book_uses_the_name_the_earlier_books_knew():
+    got = [_passage(1, "Elle McGib froze the water near Carl.",
+                    [("Elle McGib", "met", "a crawler", "Carl's ally, a Frost Maiden")])]
+    rows = R._people_rows(got, "Carl", None, settled=True,
+                          series_name=lambda n: "Elle" if n.startswith("Elle") else "")
+    assert {r[3] for r in rows} == {"Elle"}
+
+
+def test_one_line_copied_onto_two_people_tells_neither():
+    line = "Carl's acquaintance, a crawler who secured the plane"
+    got = [_passage(1, "Louis and Firas waved at Carl.",
+                    [("Louis", "met", "a crawler", line), ("Firas", "met", "a crawler", line)])]
+    rows = R._people_rows(got, "Carl", None, settled=True)
+    assert line not in {r[6] for r in rows}
+    assert {r[3] for r in rows} == {"Louis", "Firas"}
+
+
+def test_a_moment_tacked_onto_a_role_is_cut():
+    assert R._drop_scene("Carl's acquaintance, awake and hugging Britney at the top "
+                         "of the stairs") == ("Carl's acquaintance", True)
+    assert R._drop_scene("Carl's friend, kind and caring") == \
+        ("Carl's friend, kind and caring", False)

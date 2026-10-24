@@ -114,6 +114,37 @@ def series_of(book: Path, record_series=None, record_index=None) -> tuple[str, f
     return series, index
 
 
+# ------------------------------------------------------------ who is who
+
+
+def _tokens(name: str) -> list[str]:
+    # not made singular: "Crawlers" (everyone) is not "Crawler Forkith"
+    from .tools.dedupe_cast import canon
+    return [t.strip(".,;:") for t in canon(name or "").lower().split() if t.strip(".,;:")]
+
+
+def same_person(a: str, b: str) -> bool:
+    """Could two names be one person? "Miss Beatrice" and "Beatrice",
+    "Elle" and "Elle McGib", "Imani C" and "Imani Carter" (chat handles in
+    Dungeon Crawler Carl are cut short). The first names must agree; then
+    either one name is the first name alone, or one surname begins the other.
+    """
+    ta, tb = _tokens(a), _tokens(b)
+    if not ta or not tb or ta[0] != tb[0]:
+        return False
+    if ta == tb or len(ta) == 1 or len(tb) == 1:
+        return True
+    return ta[-1].startswith(tb[-1]) or tb[-1].startswith(ta[-1])
+
+
+def _one_match(name: str, people: dict) -> str:
+    """The one remembered person `name` could be, or "" when none or several."""
+    hits = {who for who, entry in people.items()
+            for n in [who] + list(entry.get("aliases") or [])
+            if same_person(name, n)}
+    return next(iter(hits)) if len(hits) == 1 else ""
+
+
 # ------------------------------------------------------------ the memory
 
 
@@ -179,6 +210,12 @@ class Memory:
         for entry in self.data["people"].values():
             if low in (a.lower() for a in entry.get("aliases", [])):
                 return entry
+        # "Miss Beatrice" for Beatrice, "Elle McGib" for Elle
+        who = _one_match(name, self.data["people"])
+        if who:
+            entry = self.data["people"][who]
+            entry.setdefault("aliases", []).append(name)
+            return entry
         # "Bea" for "Beatrice": a one-word name that begins exactly one
         # person's first name becomes their alias
         if len(name.split()) == 1 and len(low) >= 3:
@@ -211,6 +248,7 @@ class View:
                         if _num(k) < upto and b.get("story")]
         self.stories.sort(key=lambda s: _num(s[0]))
         self.people = {}            # name -> (description, aliases, books seen)
+        self._entries = {}
         for name, entry in (data.get("people") or {}).items():
             fixed = (entry.get("fixed") or "").strip()
             books = sorted((k for k in (entry.get("by_book") or {}) if _num(k) < upto),
@@ -219,15 +257,28 @@ class View:
                 continue
             desc = fixed or entry["by_book"][books[-1]]
             self.people[name] = (desc, list(entry.get("aliases") or []), len(books))
+            self._entries[name] = entry
 
     def __bool__(self) -> bool:
         return bool(self.people or self.stories or self.terms)
+
+    def name_of(self, name: str) -> str:
+        """The name the earlier books knew this person by, so one person
+        keeps one name from book to book; "" when nobody or several fit."""
+        low = name.lower().strip()
+        for who, (_d, aliases, _n) in self.people.items():
+            if low in [who.lower()] + [a.lower() for a in aliases]:
+                return who
+        return _one_match(name, self._entries)
 
     def tie(self, name: str) -> str:
         """The remembered description of someone, by name or alias."""
         low = name.lower().strip()
         if not low:
             return ""
+        known = self.name_of(name)
+        if known:
+            return self.people[known][0]
         loose = ""
         for who, (desc, aliases, _n) in self.people.items():
             for n in [who] + aliases:
