@@ -272,3 +272,16 @@ def test_what_someone_is_doing_right_now_is_cut_off():
     known = "Carl's ally and fellow crawler"
     assert R._settle_tie("Carl's ally who is escaping down the stairs", "Carl",
                          True, known) == known
+
+
+def test_book_5s_scene_lines_are_cut_too():
+    for line, rest in [
+            ("Carl's enemy lying dying on the floor after having her limbs ripped off",
+             "Carl's enemy"),
+            ("Carl's enemy cowering behind a crocodilian in terror", "Carl's enemy"),
+            ("Carl's companion who ambushes Vrah from the ceiling and bites her",
+             "Carl's companion")]:
+        assert R._drop_scene(line) == (rest, True)
+    # what lasts stays
+    assert R._drop_scene("Carl's ally, a crawler who leads the group")[1] is False
+    assert R._drop_scene("Carl's pet dinosaur chicken")[1] is False

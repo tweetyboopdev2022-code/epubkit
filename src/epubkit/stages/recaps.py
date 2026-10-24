@@ -751,7 +751,10 @@ _VAGUE = re.compile(
 _SCENE_CLAUSE = re.compile(
     r"(?i)[,;]?\s+(?:who|that|qui)\s+(?:is|are|was|has just|have just|just|ha(?:s|ve) \w+ed|"
     r"est en train de|vient de)\b.*$|"
-    r"[,;]?\s+(?:who|that)\s+\w+s\s+(?:on|about|the|a|an|blood|that)\b.*$")
+    r"[,;]?\s+(?:who|that)\s+(?!leads\b|runs\b|owns\b|works\b|lives\b)\w+[^s\s]?s"
+    r"\s+(?:on|about|from|at|into|with|the|a|an|her|his|their|blood|that|[A-Z])\S*.*$|"
+    r"[,;]?\s+\w+ing\s+(?:on|in|at|behind|from|to|into|with|under|over|the|a|an|her|his|"
+    r"their|dying)\b.*$")
 
 
 def _drop_scene(rel: str) -> tuple[str, bool]:
