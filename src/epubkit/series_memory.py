@@ -129,6 +129,14 @@ class Memory:
         except (OSError, ValueError):
             pass
 
+    def reload(self) -> None:
+        """Read the file again. A book takes most of an hour, and a hand fix
+        made meanwhile ("fixed", aliases, terms) must survive the save at the
+        end of it - book 4 of Dungeon Crawler Carl wrote back the copy it had
+        read at its start and undid two fixes."""
+        fresh = Memory(self.path, self.data.get("series", ""))
+        self.data = fresh.data
+
     @classmethod
     def open(cls, folder, series: str) -> Memory:
         folder = Path(folder) if folder else default_dir()

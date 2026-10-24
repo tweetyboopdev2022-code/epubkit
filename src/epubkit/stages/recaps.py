@@ -716,6 +716,9 @@ def _settle_tie(rel: str, hero: str, here: bool, known: str, lang: str = "en") -
       the lead: one scene does not unmake who someone is.
     """
     known = known if known and not UNLINKED.match(known) else ""
+    rel, cut = _drop_scene(rel)
+    if cut and known:
+        return known
     if not rel or UNLINKED.match(rel):
         return known or rel
     words = [w for w in hero.split() if w[:1].isupper()]
@@ -743,6 +746,21 @@ _VAGUE = re.compile(
     r"(?i)^(?:a |an |the |someone |somebody |une? |quelqu'un )?"
     r"(?:person|someone|somebody|man|woman|figure|individual|people|personne|homme|femme)?"
     r"\s*(?:who|that|qui)\b")
+
+
+_SCENE_CLAUSE = re.compile(
+    r"(?i)[,;]?\s+(?:who|that|qui)\s+(?:is|are|was|has just|have just|just|ha(?:s|ve) \w+ed|"
+    r"est en train de|vient de)\b.*$|"
+    r"[,;]?\s+(?:who|that)\s+\w+s\s+(?:on|about|the|a|an|blood|that)\b.*$")
+
+
+def _drop_scene(rel: str) -> tuple[str, bool]:
+    """'Carl's ally who has triggered the trap and is escaping via the
+    stairwell' -> ("Carl's ally", True): the part about this one scene goes."""
+    m = _SCENE_CLAUSE.search(rel or "")
+    if not m or len(rel[:m.start()].split()) < 2:
+        return rel, False
+    return rel[:m.start()].rstrip(" ,;"), True
 
 
 def _scene_only(rel: str) -> bool:
@@ -835,6 +853,7 @@ def _remember(ctx, memory, index, hero, first_person, parts, people, words) -> N
             final[who] = desc
     summaries = [s for *_x, s in parts if s]
     story = _story(provider, summaries, hero, words)
+    memory.reload()                 # keep any hand fix made during this book
     memory.record_book(index, _book_title(ctx.path), story, final,
                        lead=hero, first_person=first_person)
     memory.save()

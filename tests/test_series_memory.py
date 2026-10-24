@@ -234,3 +234,41 @@ def test_the_memory_files_a_short_name_under_the_full_one(tmp_path):
     assert "Bea" not in mem.data["people"]
     assert mem.data["people"]["Beatrice"]["aliases"] == ["Bea"]
     assert mem.data["people"]["Beatrice"]["by_book"]["1"] == "Carl's ex-girlfriend"
+
+
+def test_a_hand_fix_made_during_a_book_survives_its_save(tmp_path):
+    """Book 4 wrote back the memory it had read at its start, emptying the
+    "fixed" lines added while it ran."""
+    dcc(tmp_path, 1, {"Donut": "Donut | met | a cat | Carl's cat"})
+    path = tmp_path / "series" / "Dungeon Crawler Carl.json"
+
+    class Fixer(SeriesFake):
+        def complete(self, prompt, system=None, **kw):
+            if "Write what happened" in prompt:     # the book is nearly done
+                data = json.loads(path.read_text())
+                data["people"]["Donut"]["fixed"] = "Carl's cat and partner"
+                path.write_text(json.dumps(data))
+            return super().complete(prompt, system)
+
+    name = "Dungeon Crawler Carl 02 - Book 2 - Matt Dinniman.kepub.epub"
+    book = build(tmp_path / name, [["MARK%d Donut sat by the door. %s" % (i, I_FILLER)
+                                    for i in range(10)]])
+    _set_series(book, "Dungeon Crawler Carl")
+    run(tmp_path, book, Fixer({"Donut": "Donut | met | a cat | Carl's cat"}),
+        **{"ai.concurrency": 1, "recaps.main_character": "Carl",
+           "recaps.series_dir": str(tmp_path / "series")})
+    data = json.loads(path.read_text())
+    assert data["people"]["Donut"]["fixed"] == "Carl's cat and partner"
+    assert "2" in data["people"]["Donut"]["by_book"]
+
+
+def test_what_someone_is_doing_right_now_is_cut_off():
+    assert R._drop_scene("Carl's ally who has triggered the trap and is escaping "
+                         "via the subterranean stairwell") == ("Carl's ally", True)
+    assert R._drop_scene("Carl's loyal companion who comments on the world going "
+                         "insane") == ("Carl's loyal companion", True)
+    assert R._drop_scene("Frank's partner, a crawler who ambushed Carl") == \
+        ("Frank's partner, a crawler who ambushed Carl", False)
+    known = "Carl's ally and fellow crawler"
+    assert R._settle_tie("Carl's ally who is escaping down the stairs", "Carl",
+                         True, known) == known
