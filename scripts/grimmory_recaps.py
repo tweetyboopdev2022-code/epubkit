@@ -267,10 +267,11 @@ def write_config(args) -> Path:
         "timeout = 300\nmax_tokens = 1500\nconcurrency = %d\n\n"
         "[recaps]\nenabled = true\npassage_words = %d\ncast = true\n"
         "main_character = %s\n"
-        "cast_only = %s\n"
+        "cast_only = %s\nkeep_recaps = %s\n"
         % (args.model, args.endpoint, args.concurrency, args.passage_words,
            json.dumps(args.main_character or ""),
-           "true" if getattr(args, "characters_only", False) else "false"))
+           "true" if getattr(args, "characters_only", False) else "false",
+           "true" if getattr(args, "keep_recaps", False) else "false"))
     return CONFIG
 
 
@@ -290,7 +291,7 @@ def cmd_run(args) -> int:
         if not books:
             die("No book's filename contains %r." % args.only)
 
-    if args.characters_only:
+    if args.characters_only or args.keep_recaps:
         args.force = True
     todo = []
     for root, b in books:
@@ -659,6 +660,9 @@ def main(argv=None) -> int:
     r.add_argument("--characters-only", action="store_true",
                    help="keep each book's recap text and redo only the who's who; "
                         "books without recaps are skipped (implies --force)")
+    r.add_argument("--keep-recaps", action="store_true",
+                   help="like --characters-only for books that have recaps; books "
+                        "without them get recaps in full (implies --force)")
     r.add_argument("--keep-older-passages", action="store_true",
                    help="leave books that already have passage recaps in an older "
                         "layout alone instead of redoing them")

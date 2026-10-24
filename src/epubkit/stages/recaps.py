@@ -467,11 +467,17 @@ class RecapStage(Stage):
         # word for word, and only the who's who is written again. The model
         # still reads every passage (it needs the scene to know who is in it),
         # so this is no faster; what it saves is recaps someone was happy with.
+        # keep_recaps is the same where a book has recaps, and writes them in
+        # full where it has none, so one run covers a whole library.
         cast_only = bool(getattr(rc, "cast_only", False))
-        kept, kept_meta = (_existing_recaps(ctx.path) if cast_only else ([], {}))
+        keep = cast_only or bool(getattr(rc, "keep_recaps", False))
+        kept, kept_meta = (_existing_recaps(ctx.path) if keep else ([], {}))
         if cast_only and not kept:
             ctx.note("characters only: this book has no recaps to keep; left alone")
             return StageResult(message="no recaps")
+        cast_only = bool(kept)
+        if cast_only:
+            ctx.note("keeping the recap text; writing the who's who again")
         passage_words = int(kept_meta.get("passage_words") or rc.passage_words) \
             if cast_only else int(rc.passage_words)
         target = max(2000, passage_words * 6)

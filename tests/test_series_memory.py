@@ -314,3 +314,19 @@ def test_characters_only_leaves_a_book_without_recaps_alone(tmp_path):
     data = book.read_bytes()
     run(tmp_path, book, Fake(), **{"recaps.cast_only": True})
     assert book.read_bytes() == data
+
+
+def test_keep_recaps_writes_them_where_a_book_has_none(tmp_path):
+    book = build(tmp_path / "b.kepub.epub", [["MARK%d %s" % (i, FILLER) for i in range(6)]])
+    run(tmp_path, book, Fake(), **{"recaps.keep_recaps": True})
+    assert rows(book, "parts.tsv")
+    before = rows(book, "parts.tsv")
+
+    class Other(Fake):
+        def complete(self, prompt, system=None, **kw):
+            r = super().complete(prompt, system)
+            r.text = r.text.replace("happened", "went differently")
+            return r
+
+    run(tmp_path, book, Other(), **{"recaps.keep_recaps": True})
+    assert rows(book, "parts.tsv") == before

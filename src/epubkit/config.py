@@ -191,6 +191,9 @@ class RecapConfig:
     #: keep the recap text a book already carries, word for word, and write
     #: only the who's who again. A book without recaps is left alone
     cast_only: bool = False
+    #: like cast_only for a book that has recaps; a book without them gets
+    #: recaps and a who's who in full
+    keep_recaps: bool = False
 
 
 @dataclass
