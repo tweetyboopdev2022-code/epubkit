@@ -285,3 +285,32 @@ def test_book_5s_scene_lines_are_cut_too():
     # what lasts stays
     assert R._drop_scene("Carl's ally, a crawler who leads the group")[1] is False
     assert R._drop_scene("Carl's pet dinosaur chicken")[1] is False
+
+
+# -- characters only -------------------------------------------------------------
+
+def test_characters_only_keeps_the_recaps_word_for_word(tmp_path):
+    ch = ["MARK%d Tam waited by the door. %s" % (i, FILLER) for i in range(12)]
+    book = build(tmp_path / "b.kepub.epub", [ch])
+    run(tmp_path, book, Fake({"Tam": "Tam | met | a man | a man by the door"}))
+    before = rows(book, "parts.tsv")
+
+    class Other(Fake):
+        def complete(self, prompt, system=None, **kw):
+            r = super().complete(prompt, system)
+            r.text = r.text.replace("happened", "went differently")
+            return r
+
+    run(tmp_path, book, Other({"Tam": "Tam | met | a man | Wren's brother"}),
+        **{"recaps.cast_only": True})
+    assert rows(book, "parts.tsv") == before
+    assert any("Wren's brother" in r[6] for r in rows(book, "people.tsv"))
+    meta = dict(r[:2] for r in rows(book, "meta.tsv"))
+    assert "people_model" in meta
+
+
+def test_characters_only_leaves_a_book_without_recaps_alone(tmp_path):
+    book = build(tmp_path / "b.kepub.epub", [["MARK1 " + FILLER] * 6])
+    data = book.read_bytes()
+    run(tmp_path, book, Fake(), **{"recaps.cast_only": True})
+    assert book.read_bytes() == data

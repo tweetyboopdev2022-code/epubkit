@@ -463,7 +463,18 @@ class RecapStage(Stage):
             ctx.note("no chapters long enough to recap")
             return StageResult(message="no recaps")
 
-        target = max(2000, int(rc.passage_words) * 6)
+        # Characters only: the recap text the book already carries is kept
+        # word for word, and only the who's who is written again. The model
+        # still reads every passage (it needs the scene to know who is in it),
+        # so this is no faster; what it saves is recaps someone was happy with.
+        cast_only = bool(getattr(rc, "cast_only", False))
+        kept, kept_meta = (_existing_recaps(ctx.path) if cast_only else ([], {}))
+        if cast_only and not kept:
+            ctx.note("characters only: this book has no recaps to keep; left alone")
+            return StageResult(message="no recaps")
+        passage_words = int(kept_meta.get("passage_words") or rc.passage_words) \
+            if cast_only else int(rc.passage_words)
+        target = max(2000, passage_words * 6)
         passages = []                         # (order, path, label, paras)
         for order, path, label, paras in docs:
             for chunk in _segments(paras, target):
@@ -617,13 +628,18 @@ class RecapStage(Stage):
 
         parts = [(it[0], it[1], it[3][-1][0], it[2], s)
                  for it, s, _p in got if s]
+        if cast_only:
+            parts = kept
         people = _people_rows(got, hero, ctx, lang, settled=True) if rc.cast else []
         legacy = bool(getattr(rc, "legacy_files", False))
         chapters = _chapter_rows(parts)
         cast = _legacy_cast(people) if legacy else []
-        meta = [("format", str(FORMAT)), ("passage_words", str(rc.passage_words)),
-                ("model", str(getattr(ctx.provider, "model", "") or "")),
+        model = str(getattr(ctx.provider, "model", "") or "")
+        meta = [("format", str(FORMAT)), ("passage_words", str(passage_words)),
+                ("model", kept_meta.get("model", model) if cast_only else model),
                 ("main_character", hero), ("language", lang)]
+        if cast_only:
+            meta.append(("people_model", model))
         if first_person:
             meta.append(("first_person", "1"))
         if memory is not None:
@@ -647,6 +663,35 @@ class RecapStage(Stage):
 
 
 # ------------------------------------------------------------ the series
+
+
+def _existing_recaps(book: Path):
+    """-> (parts rows as _embed writes them, meta) from the book's own
+    recaps/parts.tsv, or ([], {}) when it has none."""
+    try:
+        with zipfile.ZipFile(book) as z:
+            opf_name = _opf_name(z)
+            base = posixpath.dirname(opf_name) if opf_name else ""
+            here = (base + "/" if base else "") + RECAP_DIR + "/"
+
+            def rows(name):
+                try:
+                    raw = z.read(here + name).decode("utf-8", "replace")
+                except KeyError:
+                    return []
+                return [r.split("\t") for r in raw.splitlines() if r.strip()]
+
+            parts = []
+            for r in rows("parts.tsv"):
+                if len(r) >= 5 and r[4].strip():
+                    try:
+                        parts.append((int(r[0]), r[1], int(r[2]), r[3], r[4]))
+                    except ValueError:
+                        continue
+            meta = {r[0]: r[1] for r in rows("meta.tsv") if len(r) >= 2}
+    except (OSError, zipfile.BadZipFile):
+        return [], {}
+    return parts, meta
 
 
 def reading_order(books):

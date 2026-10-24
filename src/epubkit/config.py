@@ -188,6 +188,9 @@ class RecapConfig:
     #: auto | yes | no - is the book told as "I" by its main character?
     #: Auto reads the narration with the dialogue taken out
     first_person: str = "auto"
+    #: keep the recap text a book already carries, word for word, and write
+    #: only the who's who again. A book without recaps is left alone
+    cast_only: bool = False
 
 
 @dataclass
