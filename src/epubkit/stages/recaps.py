@@ -311,7 +311,10 @@ In one line of 6 to 18 words, say who {name} is to {hero} and what they are
 (their species, job or title), as of the END of the book. Use only the lines
 above. Some lines name other people: a species, job or title that a line
 gives to someone else is not {name}'s. Where lines disagree about what
-{name} is, go with what most of them say. Answer with the line only.
+{name} is, go with what most of them say. Say what lasts - who they are,
+what they are, where they stand with {hero} now - not one event ("who
+survives the initial attack"), which the next book's reader no longer
+needs. Answer with the line only.
 """
 
 WHO_PROMPT_FR = """Voici comment un personnage, {name}, a été décrit au fil d'un
@@ -322,8 +325,9 @@ En une ligne de 6 à 18 mots, dites qui est {name} pour {hero} et ce qu'il ou
 elle est (espèce, métier ou titre), à la FIN du livre. N'utilisez que les
 lignes ci-dessus. Certaines lignes nomment d'autres personnes : une espèce, un
 métier ou un titre qu'une ligne donne à quelqu'un d'autre n'est pas celui de
-{name}. Si les lignes se contredisent, suivez la majorité. Répondez par la
-ligne seule.
+{name}. Si les lignes se contredisent, suivez la majorité. Dites ce qui
+dure - qui elle est, ce qu'elle est, où elle en est avec {hero} - et non un
+seul événement. Répondez par la ligne seule.
 """
 
 #: everything a recap run says in the book's own language
