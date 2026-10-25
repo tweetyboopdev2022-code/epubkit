@@ -56,8 +56,10 @@ STATE = BACKUPS / "grimmory-recaps.json"
 LOG = BACKUPS / "log.tsv"
 CONFIG = BACKUPS / "epubkit-recaps.toml"
 
-DEFAULT_ENDPOINT = "http://localhost:11434"
-DEFAULT_MODEL = "gemma2:9b"
+DEFAULT_PROVIDER = "openai"          # llama-server on the library server; "ollama" still works
+DEFAULT_ENDPOINT = "http://localhost:8081"
+DEFAULT_MODEL = "qwen3.6-35b-a3b"
+LLAMA_ENV = Path("/etc/llama-server.env")
 
 
 # ---------------------------------------------------------------- helpers
@@ -248,6 +250,36 @@ def _words(R, book: Path) -> int:
     return sum(len(t.split()) for _o, _p, _l, paras in docs for _n, t in paras)
 
 
+def load_llama_key() -> None:
+    """Give epubkit llama-server's key unless OPENAI_API_KEY is already set."""
+    if os.environ.get("OPENAI_API_KEY"):
+        return
+    try:
+        for line in LLAMA_ENV.read_text().splitlines():
+            if line.startswith("LLAMA_KEY="):
+                os.environ["OPENAI_API_KEY"] = line.split("=", 1)[1].strip()
+                return
+    except OSError:
+        pass
+    die("No OPENAI_API_KEY set and %s is not readable." % LLAMA_ENV)
+
+
+def check_openai(endpoint: str, model: str) -> None:
+    base = endpoint.rstrip("/")
+    if not base.endswith("/v1"):
+        base += "/v1"
+    req = urllib.request.Request(base + "/models", headers={
+        "Authorization": "Bearer " + os.environ.get("OPENAI_API_KEY", "")})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode())
+    except Exception as exc:                                # noqa: BLE001
+        die("llama-server is not answering at %s (%s)." % (endpoint, exc))
+    have = {m.get("id") for m in data.get("data", [])}
+    if model not in have:
+        die("The server has no model %r. It has: %s" % (model, ", ".join(sorted(have))))
+
+
 def check_ollama(endpoint: str, model: str) -> None:
     try:
         with urllib.request.urlopen(endpoint.rstrip("/") + "/api/tags", timeout=10) as r:
@@ -263,11 +295,11 @@ def write_config(args) -> Path:
     BACKUPS.mkdir(parents=True, exist_ok=True)
     CONFIG.write_text(
         "# written by grimmory_recaps.py; edit the command line, not this file\n"
-        "[ai]\nprovider = \"ollama\"\nmodel = \"%s\"\nendpoint = \"%s\"\n"
+        "[ai]\nprovider = \"%s\"\nmodel = \"%s\"\nendpoint = \"%s\"\n"
         "timeout = 300\nmax_tokens = 1500\nconcurrency = %d\n\n"
         "[recaps]\nenabled = true\npassage_words = %d\ncast = true\n"
         "main_character = %s\n"
-        % (args.model, args.endpoint, args.concurrency, args.passage_words,
+        % (args.provider, args.model, args.endpoint, args.concurrency, args.passage_words,
            json.dumps(args.main_character or "")))
     return CONFIG
 
@@ -322,7 +354,11 @@ def cmd_run(args) -> int:
                 "user; fix the permissions (or run this as that user) and rerun."
                 % (b, os.environ.get("USER", "this user")))
 
-    check_ollama(args.endpoint, args.model)
+    if args.provider == "openai":
+        load_llama_key()
+        check_openai(args.endpoint, args.model)
+    else:
+        check_ollama(args.endpoint, args.model)
     cfg = write_config(args)
     state = load_state()
     stamp = dt.date.today().isoformat()
@@ -651,6 +687,7 @@ def main(argv=None) -> int:
                    help="leave books that already have passage recaps in an older "
                         "layout alone instead of redoing them")
     r.add_argument("--dry-run", action="store_true", help="list what would be done")
+    r.add_argument("--provider", choices=["openai", "ollama"], default=DEFAULT_PROVIDER)
     r.add_argument("--model", default=DEFAULT_MODEL)
     r.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
     r.add_argument("--concurrency", type=int, default=1)

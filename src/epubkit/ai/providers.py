@@ -62,6 +62,10 @@ class OpenAIProvider(Provider):
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
         }
+        if "api.openai.com" not in self.endpoint:
+            # Local OpenAI-compatible servers (llama.cpp): skip the thinking
+            # pass so it doesn't eat max_tokens before the answer starts.
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
         headers = {}
         if self.api_key:
             headers["Authorization"] = "Bearer " + self.api_key
