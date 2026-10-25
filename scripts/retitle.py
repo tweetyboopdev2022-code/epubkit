@@ -22,7 +22,7 @@ import tempfile
 import zipfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
-from epubkit.tools import series_hint as S          # noqa: E402
+from epubkit.tools import series_hint as S  # noqa: E402
 
 TEMPLATE = "{series} {index:02d} - {title} - {authors}"
 

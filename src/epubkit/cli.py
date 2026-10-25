@@ -445,6 +445,8 @@ def _cmd_recaps(args, cfg: Config, log) -> int:
     if skipped:
         print("%d of %d books already have current recaps; skipping them "
               "(--force redoes them)" % (skipped, len(books)))
+    # a series in order: each book needs the memory the books before it built
+    todo = R.reading_order(todo)
     if args.limit:
         todo = todo[:args.limit]
 

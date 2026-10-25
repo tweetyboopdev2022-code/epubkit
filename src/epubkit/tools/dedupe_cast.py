@@ -10,6 +10,10 @@ import sys
 
 TITLES = (r"^(?:professor|prof\.?|mr\.?|mrs\.?|miss|ms\.?|dr\.?|uncle|aunt|madame|madam|mme\.?|sir|lady|lord|"
           r"monsieur|m\.|mademoiselle|mlle\.?|docteur|oncle|tante|ma[iî]tre)\s+")
+# Ranks a person gains or loses over a series: Princess, then Queen, Imogen;
+# "Crawler Bobby" in Dungeon Crawler Carl. Same person under each.
+RANKS = (r"^(?:(?:crown\s+|high\s+elf\s+)?(?:prince|princess|queen|king|emperor|empress)|"
+         r"duke|duchess|crawler|captain|commandant|prince|princesse|reine|roi)\s+")
 # Mr/Mrs/Miss/Aunt/Uncle mark a DIFFERENT member of the same family, so
 # "Mrs. Finnigan" must not collapse into "Seamus Finnigan". Professor and
 # Dr are roles the same person also answers to, so those still collapse.
@@ -37,7 +41,9 @@ def canon(name):
     n = name.strip().rstrip(".,;:")
     # "The Prime Minister" and "Prime Minister" are the one man
     n = re.sub(r"^(?:the|le|la|les)\s+|^l['’]", "", n, flags=re.I)
-    return re.sub(TITLES, "", n, flags=re.I).strip()
+    n = re.sub(TITLES, "", n, flags=re.I).strip()
+    stripped = re.sub(RANKS, "", n, flags=re.I).strip()
+    return stripped or n
 
 
 def singular(tok):
@@ -83,12 +89,33 @@ def _resolver(rows):
             if is_person(person):
                 split.append((order, fname, person.strip().rstrip(".,;:"), desc))
 
+    # Chat handles cut names short: Dungeon Crawler Carl has "Elle McGib"
+    # for Elle McGibbons and "Imani C" for Imani Carter. A full name whose
+    # surname begins exactly one longer surname with the same first name is
+    # that person.
+    longs = {}
+    for _, _, name, _ in split:
+        k = key(name)
+        if " " in k:
+            first, last = k.split(" ", 1)
+            longs.setdefault(first, set()).add(last)
+    cut = {}
+    for first, lasts in longs.items():
+        for a in lasts:
+            longer = [b for b in lasts if b != a and b.startswith(a)]
+            if len(longer) == 1:
+                cut[first + " " + a] = first + " " + longer[0]
+
+    def ckey(name):
+        k = key(name)
+        return cut.get(k, k)
+
     full = {}
     for _, _, name, _ in split:
         toks = [singular(t) for t in canon(name).lower().split() if t]
         if len(toks) > 1:
             for t in (toks[0], toks[-1]):
-                full.setdefault(t, set()).add(key(name))
+                full.setdefault(t, set()).add(ckey(name))
 
 # If the model listed the short form and a full name as two entries in the
 # SAME chapter, it meant two people: Mrs. Finnigan and Seamus Finnigan.
@@ -117,7 +144,7 @@ def _resolver(rows):
                     continue
                 toks = [singular(t) for t in canon(other).lower().split() if t]
                 if len(toks) > 1 and tok in (toks[0], toks[-1]):
-                    rivals.add((key(sh), key(other)))
+                    rivals.add((key(sh), ckey(other)))
 
     def resolve(name):
         # A lone token is the same person as a full name containing it, but
@@ -127,7 +154,7 @@ def _resolver(rows):
             target = next(iter(full[toks[0]]))
             if (key(name), target) not in rivals:
                 return target
-        return key(name)
+        return ckey(name)
 
     display = {}
     for order, _, name, _ in split:

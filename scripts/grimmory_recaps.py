@@ -267,8 +267,11 @@ def write_config(args) -> Path:
         "timeout = 300\nmax_tokens = 1500\nconcurrency = %d\n\n"
         "[recaps]\nenabled = true\npassage_words = %d\ncast = true\n"
         "main_character = %s\n"
+        "cast_only = %s\nkeep_recaps = %s\n"
         % (args.model, args.endpoint, args.concurrency, args.passage_words,
-           json.dumps(args.main_character or "")))
+           json.dumps(args.main_character or ""),
+           "true" if getattr(args, "characters_only", False) else "false",
+           "true" if getattr(args, "keep_recaps", False) else "false"))
     return CONFIG
 
 
@@ -288,9 +291,13 @@ def cmd_run(args) -> int:
         if not books:
             die("No book's filename contains %r." % args.only)
 
+    if args.characters_only or args.keep_recaps:
+        args.force = True
     todo = []
     for root, b in books:
         a = R.audit(b)
+        if args.characters_only and a["kind"] != "passages":
+            continue                         # nothing to keep, so nothing to do
         if a["kind"] == "passages" and not args.force and not a.get("lead_off") \
                 and not a.get("lang_off") and (
                 a["format"] >= R.FORMAT or args.keep_older_passages):
@@ -307,6 +314,9 @@ def cmd_run(args) -> int:
             log(b, "skipped", "not a readable zip")
             continue
         todo.append((root, b))
+    # a series in order: each book is written with what the books before it
+    # put in the series memory
+    todo = R.reading_order(todo)
     if args.limit:
         todo = todo[:args.limit]
     say("%d books in the library, %d to do%s." % (
@@ -647,6 +657,12 @@ def main(argv=None) -> int:
     r.add_argument("--only", help="only books whose filename contains this")
     r.add_argument("--limit", type=int, default=0, help="stop after this many books")
     r.add_argument("--force", action="store_true", help="redo books already current")
+    r.add_argument("--characters-only", action="store_true",
+                   help="keep each book's recap text and redo only the who's who; "
+                        "books without recaps are skipped (implies --force)")
+    r.add_argument("--keep-recaps", action="store_true",
+                   help="like --characters-only for books that have recaps; books "
+                        "without them get recaps in full (implies --force)")
     r.add_argument("--keep-older-passages", action="store_true",
                    help="leave books that already have passage recaps in an older "
                         "layout alone instead of redoing them")
