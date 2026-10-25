@@ -1676,14 +1676,20 @@ def _people_rows(got, hero, ctx, lang: str = "en", settled: bool = False,
         # McGib" beside book 4's "Elle". Two people this book keeps apart
         # are not merged by it, though.
         to = {d: series_name(d) for d in set(names.values()) if not _is_hero(d, hero)}
-        hits: dict[str, int] = {}
-        for t in to.values():
+        forms: dict[str, list[str]] = {}
+        for d, t in to.items():
             if t:
-                hits[t] = hits.get(t, 0) + 1
-        # a name or alias the memory already holds is that person for sure:
-        # book 4 listed "Princess Donut" beside "Donut"
+                forms.setdefault(t, []).append(d)
+
+        def apart(ds):
+            return any(frozenset((a, b)) in together
+                       for i, a in enumerate(ds) for b in ds[i + 1:])
+        # Several of this book's names for one remembered person ("Bea" and
+        # "Miss Beatrice" in DCC 3) are that person, unless a passage listed
+        # two of them side by side. Then only a name or alias the memory
+        # already holds is sure: book 4 listed "Princess Donut" beside "Donut".
         shown = {d: t for d, t in to.items()
-                 if t and (hits[t] == 1 or series_name(d, True) == t)}
+                 if t and (not apart(forms[t]) or series_name(d, True) == t)}
         names = {raw: shown.get(d, d) for raw, d in names.items()}
 
     # the same words for two people in one passage are the model copying one

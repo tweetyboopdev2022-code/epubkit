@@ -462,3 +462,17 @@ def test_a_known_tie_is_not_forgotten_by_a_later_passage():
                     [("Imani C", "met", "a crawler", "not yet connected to Carl; a crawler")])]
     rows = R._people_rows(got, "Carl", None, settled=True)
     assert rows[-1][6] == "Carl's ally on his team"
+
+
+def test_two_forms_the_book_could_not_link_join_the_remembered_person():
+    """DCC 3 had "Bea" and "Miss Beatrice" but never "Beatrice"."""
+    mem = SM.Memory.open(None, "S")
+    mem.data["people"] = {"Beatrice": {"aliases": ["Bea"], "fixed": "",
+                                       "by_book": {"1": "Carl's ex-girlfriend"}}}
+    view = mem.before(2)
+    got = [_passage(1, "Bea was mentioned by Carl.",
+                    [("Bea", "heard", "x", "Carl's ex-girlfriend")]),
+           _passage(2, "Miss Beatrice and Carl.",
+                    [("Miss Beatrice", "heard", "y", "Carl's ex, a show-cat owner")])]
+    rows = R._people_rows(got, "Carl", None, settled=True, series_name=view.name_of)
+    assert {r[3] for r in rows} == {"Beatrice"}
