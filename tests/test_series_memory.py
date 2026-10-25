@@ -451,3 +451,14 @@ def test_the_memory_keeps_no_levels_and_no_lone_deaths():
     assert R._lasting("a level 9 angel", lines) == "an angel"
     dead = ["killed by Quetzalcoatlus", "dead on the bridge", "a principal"]
     assert "killed" in R._lasting("a principal killed by Quetzalcoatlus", dead)
+
+
+def test_a_known_tie_is_not_forgotten_by_a_later_passage():
+    """Imani C ended book 3 "not yet connected to Carl" though the book had
+    already put her on his team."""
+    got = [_passage(1, "Imani fought beside Carl.",
+                    [("Imani", "met", "a crawler", "Carl's ally on his team")]),
+           _passage(2, "Imani C waited.",
+                    [("Imani C", "met", "a crawler", "not yet connected to Carl; a crawler")])]
+    rows = R._people_rows(got, "Carl", None, settled=True)
+    assert rows[-1][6] == "Carl's ally on his team"

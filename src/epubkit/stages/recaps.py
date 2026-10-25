@@ -531,7 +531,12 @@ class RecapStage(Stage):
                 for n, (_st, rel) in known.items():
                     if n.lower() == name.lower() and rel and not UNLINKED.match(rel):
                         return rel
-            return view.tie(name) if view else ""
+                # "Imani" earlier in the book is "Imani C" now
+                for n, (_st, rel) in known.items():
+                    if rel and not UNLINKED.match(rel) and series_memory.same_person(n, name):
+                        return rel
+            tie = view.tie(name) if view else ""
+            return "" if UNLINKED.match(tie or "") else tie
 
         def notes_for(text, known, earlier):
             out = []
@@ -1692,7 +1697,7 @@ def _people_rows(got, hero, ctx, lang: str = "en", settled: bool = False,
     # was handed Donut's hand-written one
     theirs = {_tidy_key(d): who for d, who in (series_lines or {}).items()}
 
-    rows, seen, met, said = [], set(), set(), {}
+    rows, seen, met, said, tied = [], set(), set(), {}, set()
     for _p, (order, path, para, status, kind, text), name in sorted(raw, key=lambda r: r[0]):
         who = names.get(name)
         if not who or not text:
@@ -1712,8 +1717,12 @@ def _people_rows(got, hero, ctx, lang: str = "en", settled: bool = False,
         if kind == "rel" and who in said and _scene_only(text) and \
                 not _scene_only(said[who]):
             continue        # one scene does not replace who they are
+        if kind == "rel" and who in tied and UNLINKED.match(text):
+            continue        # nor does a passage that forgot the tie
         seen.add(who)
         said[who] = text
+        if kind == "rel" and not UNLINKED.match(text) and not _is_hero(who, hero):
+            tied.add(who)
         if status == "met":
             met.add(who)
         rows.append((order, path, para, who, status, text))
