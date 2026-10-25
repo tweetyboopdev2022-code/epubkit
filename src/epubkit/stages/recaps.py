@@ -1672,6 +1672,19 @@ def _people_rows(got, hero, ctx, lang: str = "en", settled: bool = False,
         together.update(frozenset((a, b)) for i, a in enumerate(ns) for b in ns[i + 1:])
     names = _nicknames(names, together, hero)
     if series_name:
+        # someone the earlier books know by name is not folded together with
+        # a name that cannot be them: "Donut" with "Robot Donut", new in DCC 4
+        groups: dict[str, list[str]] = {}
+        for said_as, d in names.items():
+            groups.setdefault(d, []).append(said_as)
+        for forms_here in groups.values():
+            known = {series_name(f, True) for f in forms_here} - {""}
+            if len(known) != 1:
+                continue
+            mine = known.pop()
+            for f in forms_here:
+                if series_name(f) != mine:
+                    names[f] = f
         # one person, one name across the series: book 5 listed "Elle
         # McGib" beside book 4's "Elle". Two people this book keeps apart
         # are not merged by it, though.

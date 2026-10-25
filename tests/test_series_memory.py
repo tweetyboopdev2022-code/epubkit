@@ -476,3 +476,16 @@ def test_two_forms_the_book_could_not_link_join_the_remembered_person():
                     [("Miss Beatrice", "heard", "y", "Carl's ex, a show-cat owner")])]
     rows = R._people_rows(got, "Carl", None, settled=True, series_name=view.name_of)
     assert {r[3] for r in rows} == {"Beatrice"}
+
+
+def test_a_remembered_person_is_not_folded_into_a_new_fuller_name():
+    """DCC 4: "Donut" went into "Robot Donut", a new character."""
+    mem = SM.Memory.open(None, "S")
+    mem.data["people"] = {"Donut": {"aliases": [], "fixed": "",
+                                    "by_book": {"1": "Carl's cat"}}}
+    view = mem.before(2)
+    got = [_passage(1, "Donut and Carl.", [("Donut", "met", "a cat", "Carl's cat")]),
+           _passage(2, "Robot Donut beeped at Carl.",
+                    [("Robot Donut", "met", "a robot", "a robot toy")])]
+    rows = R._people_rows(got, "Carl", None, settled=True, series_name=view.name_of)
+    assert {r[3] for r in rows} == {"Donut", "Robot Donut"}
