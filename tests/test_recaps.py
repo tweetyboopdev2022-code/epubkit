@@ -659,3 +659,83 @@ def _set_series(book, series):
                     b"</metadata>", b'<meta name="calibre:series" content="%s"/></metadata>'
                     % series.encode())
             z.writestr(info, data)
+
+
+# -- books told by turns -------------------------------------------------------
+
+def _turns_docs():
+    """Chapters titled by whose turn it is, as A Clash of Kings is."""
+    who = ["Tyrion", "Catelyn", "Jon", "Tyrion", "Catelyn", "Jon", "Arya", "Arya"]
+    return [(i, "c%d.xhtml" % i, name.upper(),
+             [(0, "That night %s looked at the fire, and %s said nothing. %s"
+               % (name, name, FILLER))])
+            for i, name in enumerate(who)]
+
+
+def test_a_book_told_by_turns_has_no_single_lead():
+    docs = _turns_docs()
+    assert R._viewpoints(docs)["Tyrion"] == 2
+    assert R._ensemble(docs, "Tyrion")
+
+
+def test_a_book_with_one_lead_is_not_told_by_turns():
+    docs = [(i, "c%d.xhtml" % i, "Chapter %d" % (i + 1),
+             [(0, "That night Harry looked at Ron, and then Harry laughed. " + FILLER)])
+            for i in range(8)]
+    assert not R._ensemble(docs, "Harry")
+    assert not R._ensemble(docs, "the narrator")
+
+
+def test_a_series_lead_who_has_gone_does_not_carry_over(tmp_path):
+    """A Clash of Kings kept Eddard, the lead of A Game of Thrones: half its
+    people came out "not yet connected to Eddard", who is dead by then."""
+    docs = _turns_docs()
+
+    class View:
+        lead, ensemble = "Eddard", False
+
+    class Rc:
+        main_character = ""
+
+    class Ctx:
+        notes = []
+
+        def note(self, text):
+            self.notes.append(text)
+
+    ctx = Ctx()
+    called = []
+    real = R._hero
+    R._hero = lambda *a, **k: called.append(1) or "Tyrion"
+    try:
+        assert R._lead_for(ctx, Rc(), View(), docs, "en", None) == ""
+    finally:
+        R._hero = real
+    assert called and "Eddard" in ctx.notes[0]
+    # a lead who is still there carries over, whoever the book opens on
+    View.lead = "Tyrion"
+    assert R._share("Tyrion", docs) < 0.5
+    View.lead = "Jon"
+    docs = [(i, "c", "Chapter", [(0, "Then Jon went out. " + FILLER)]) for i in range(8)]
+    assert R._lead_for(ctx, Rc(), View(), docs, "en", None) == "Jon"
+    # a series the memory knows is told by turns stays so, and "none" by hand
+    View.ensemble = True
+    assert R._lead_for(ctx, Rc(), View(), docs, "en", None) == ""
+    Rc.main_character = "none"
+    assert R._lead_for(ctx, Rc(), None, docs, "en", None) == ""
+
+
+def test_a_book_with_no_lead_asks_about_no_lead():
+    for lang in ("en", "fr"):
+        words = R.TEXT[lang]
+        parts = R._prompt_parts(words, "")
+        prompt = words["prompt"].format(text="T", before="", pov="", **parts)
+        assert "{" not in prompt and "not yet connected" not in prompt
+        assert "pas encore li" not in prompt
+        led = words["prompt"].format(text="T", before="", pov="",
+                                     **R._prompt_parts(words, "Wren"))
+        assert "Wren" in led and "{" not in led
+
+
+def test_ships_are_not_people():
+    assert "ships" in R.PROMPT and "navires" in R.PROMPT_FR

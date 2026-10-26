@@ -489,3 +489,13 @@ def test_a_remembered_person_is_not_folded_into_a_new_fuller_name():
                     [("Robot Donut", "met", "a robot", "a robot toy")])]
     rows = R._people_rows(got, "Carl", None, settled=True, series_name=view.name_of)
     assert {r[3] for r in rows} == {"Donut", "Robot Donut"}
+
+
+def test_a_series_told_by_turns_drops_its_lead(tmp_path):
+    m = SM.Memory.open(tmp_path, "A Song of Ice and Fire")
+    m.record_book(1, "A Game of Thrones", "story", {"Jon": "a bastard"}, lead="Eddard")
+    assert m.data["lead"] == "Eddard" and not m.before(2).ensemble
+    m.record_book(1, "A Game of Thrones", "story", {"Jon": "a bastard"}, ensemble=True)
+    assert m.data["lead"] == "" and m.before(2).ensemble
+    m.record_book(2, "A Clash of Kings", "story", {}, lead="Tyrion")
+    assert m.data["lead"] == ""

@@ -18,6 +18,7 @@ The file is plain JSON, meant to be opened and corrected by hand::
       "series": "Dungeon Crawler Carl",
       "lead": "Carl",
       "first_person": true,
+      "ensemble": null,                     <- true: no single lead (told by turns)
       "books": {"1": {"title": "...", "story": "..."}},
       "people": {
         "Donut": {
@@ -151,7 +152,7 @@ def _one_match(name: str, people: dict) -> str:
 class Memory:
     def __init__(self, path: Path, series: str):
         self.path = Path(path)
-        self.data = {"series": series, "lead": "", "first_person": None,
+        self.data = {"series": series, "lead": "", "first_person": None, "ensemble": None,
                      "books": {}, "people": {}, "terms": {}}
         try:
             got = json.loads(self.path.read_text(encoding="utf-8"))
@@ -182,11 +183,19 @@ class Memory:
     # -- writing, after a book is done
 
     def record_book(self, index, title: str, story: str, people: dict,
-                    lead: str = "", first_person: bool | None = None) -> None:
-        """people: {name: description as of the end of this book}."""
+                    lead: str = "", first_person: bool | None = None,
+                    ensemble: bool = False) -> None:
+        """people: {name: description as of the end of this book}.
+
+        ensemble: the book follows several people, with no single lead. The
+        series is then marked so, and any lead it had is dropped.
+        """
         k = _key(index)
         self.data["books"][k] = {"title": title, "story": story.strip()}
-        if lead and not self.data.get("lead"):
+        if ensemble:
+            self.data["ensemble"] = True
+            self.data["lead"] = ""
+        elif lead and not self.data.get("lead") and not self.data.get("ensemble"):
             self.data["lead"] = lead
         if first_person is not None and self.data.get("first_person") is None:
             self.data["first_person"] = bool(first_person)
@@ -241,6 +250,7 @@ class View:
 
     def __init__(self, data: dict, upto: float):
         self.lead = data.get("lead", "")
+        self.ensemble = bool(data.get("ensemble"))
         self.first_person = data.get("first_person")
         self.terms = dict(data.get("terms") or {})
         self.stories = [(k, b.get("title", ""), b.get("story", ""))

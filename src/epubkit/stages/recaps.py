@@ -82,9 +82,7 @@ name exactly as written above, and nothing else. If the story is told by an
 """
 
 PROMPT = """The reader has read this book up to the END of the passage below, and nothing after it.
-The main character of the whole book is {hero}, including in passages where
-{hero} does not appear. Nobody else is ever "the main character".
-{pov}
+{lead}{pov}
 Rules:
 - Use ONLY what this passage states, plus the reader's notes above it (what
   the reader has learned in earlier books and earlier in this book). If
@@ -99,39 +97,28 @@ SUMMARY: <2-4 sentences, past tense, what happened in this passage, ending
 with the situation at its final lines - who is there and what is about to
 happen - so a reader knows exactly where they left off.>
 PEOPLE:
-<Name> | <met or heard> | <how the passage first introduces them> | <their relationship to {hero} and their role>
+<Name> | <met or heard> | <how the passage first introduces them> | {fourth}
 
 PEOPLE must list EVERY individual the passage names or refers to, not only
 those on the page. Include people who are only mentioned in passing, talked
 about, remembered, written to or about, or described in a story, rumour,
 legend or piece of history that someone tells - including the dead and the
-absent. Leave out groups, species, places, organisations and objects.
+absent. Leave out groups, species, places, organisations and objects,
+and ships, boats and other vessels, even when they have names.
 - Name: as the text calls them. A title used as a name counts ("The Duke").
 - met: they are physically present or speak in this passage. heard: only
   talked about, remembered, or named - including anyone dead or far away.
 - The third field is how they are first presented, before anything later in
   the passage adds to it. 4 to 12 words.
 - The fourth field says who this person IS, not what they did in one scene.
-  State a connection to {hero} ONLY if this passage or the reader's notes
-  show or say it. Never infer family ties or relationships from anything
-  else; if neither connects them to {hero}, begin with
-  "not yet connected to {hero}" and then give their role. Otherwise:
-  their relationship to {hero} (family, friend, enemy, teacher, stranger,
-  someone {hero} has only heard of...), then what they are (a teacher, a
-  government minister, a servant, a cat, an alien showrunner...) and, if
-  there is room, the one thing that sets them apart, as of the end of this
-  passage. 6 to 20 words. Examples: "Harry's best friend, a fellow student
-  from a big poor family"; "not yet connected to Wren; the town's magistrate".
-  If the reader's notes already describe this person, START from that
+{tie}  If the reader's notes already describe this person, START from that
   description and add what this passage changes. Never write a vaguer or
   shorter description than the notes give, and never describe someone only
   by what they did in this scene. Wrong: "clutching a potion, staring at
   Carl"; "a person who suggested opening the door". Right: "Frank's
   partner, a crawler who ambushed Carl"; "a fellow crawler in Carl's group,
   a retired teacher".
-  For {hero} themself write: the main character. For anyone not yet
-  connected to {hero}, say so plainly ("not yet connected to {hero}").
-
+{tie_end}
 {before}Passage:
 {text}
 """
@@ -172,9 +159,7 @@ nom n'est pas dans la liste, répondez : le narrateur
 """
 
 PROMPT_FR = """Le lecteur a lu ce livre jusqu'à la FIN du passage ci-dessous, et rien au-delà.
-Le personnage principal de tout le livre est {hero}, y compris dans les passages
-où {hero} n'apparaît pas. Personne d'autre n'est jamais « le personnage principal ».
-{pov}
+{lead}{pov}
 Règles :
 - N'utilisez QUE ce que dit ce passage, plus les notes du lecteur placées
   avant lui (ce que le lecteur sait déjà des livres précédents et du début de
@@ -191,14 +176,15 @@ RÉSUMÉ : <2 à 4 phrases au passé : ce qui s'est passé dans ce passage, en
 terminant par la situation à ses dernières lignes - qui est là et ce qui va
 arriver - pour que le lecteur sache exactement où il s'est arrêté.>
 PERSONNAGES :
-<Nom> | <rencontré ou évoqué> | <comment le passage le présente d'abord> | <son lien avec {hero} et son rôle>
+<Nom> | <rencontré ou évoqué> | <comment le passage le présente d'abord> | {fourth}
 
 PERSONNAGES doit lister CHAQUE individu que le passage nomme ou évoque, pas
 seulement ceux qui sont présents. Incluez les personnes seulement mentionnées
 en passant, dont on parle, dont on se souvient, à qui ou sur qui l'on écrit, ou
 qui figurent dans une histoire, une rumeur, une légende ou un récit historique
 que quelqu'un raconte - y compris les morts et les absents. Laissez de côté les
-groupes, les espèces, les lieux, les organisations et les objets.
+groupes, les espèces, les lieux, les organisations et les objets, ainsi que
+les navires, bateaux et autres vaisseaux, même quand ils ont un nom.
 - Nom : tel que le texte l'appelle. Un titre employé comme nom compte (« Le Duc »).
 - rencontré : la personne est physiquement présente ou parle dans ce passage.
   évoqué : on en parle seulement, on s'en souvient ou on la nomme - y compris
@@ -206,7 +192,65 @@ groupes, les espèces, les lieux, les organisations et les objets.
 - Le troisième champ dit comment la personne est présentée la première fois,
   avant que la suite du passage n'y ajoute quoi que ce soit. De 4 à 12 mots.
 - Le quatrième champ dit qui EST cette personne, pas ce qu'elle a fait dans
-  une scène. N'indiquez un lien avec {hero} QUE si ce passage ou les notes du
+  une scène.
+{tie}  Si les notes du lecteur décrivent déjà cette personne, PARTEZ de cette
+  description et ajoutez ce que ce passage change. N'écrivez jamais une
+  description plus vague ou plus courte que celle des notes, et ne décrivez
+  jamais quelqu'un seulement par ce qu'il a fait dans cette scène. Faux :
+  « serrant une potion, fixant Carl ». Juste : « la compagne de Frank, une
+  candidate qui a tendu une embuscade à Carl ».
+{tie_end}
+{before}Passage :
+{text}
+"""
+
+BEFORE_FR = """Juste avant ce passage (pour le contexte seulement - ne le résumez pas,
+et ne listez personne qui s'y trouve sans être aussi dans le passage) :
+{text}
+
+"""
+
+# The parts of PROMPT that hang on a main character. A book that follows
+# several people in turn has none: A Clash of Kings came out with half its
+# 867 people "not yet connected to Eddard", who is dead before it starts,
+# because the series kept the lead its first book had.
+LEAD = """The main character of the whole book is {hero}, including in passages where
+{hero} does not appear. Nobody else is ever "the main character".
+"""
+FOURTH = "<their relationship to {hero} and their role>"
+TIE = """  State a connection to {hero} ONLY if this passage or the reader's notes
+  show or say it. Never infer family ties or relationships from anything
+  else; if neither connects them to {hero}, begin with
+  "not yet connected to {hero}" and then give their role. Otherwise:
+  their relationship to {hero} (family, friend, enemy, teacher, stranger,
+  someone {hero} has only heard of...), then what they are (a teacher, a
+  government minister, a servant, a cat, an alien showrunner...) and, if
+  there is room, the one thing that sets them apart, as of the end of this
+  passage. 6 to 20 words. Examples: "Harry's best friend, a fellow student
+  from a big poor family"; "not yet connected to Wren; the town's magistrate".
+"""
+TIE_END = """  For {hero} themself write: the main character. For anyone not yet
+  connected to {hero}, say so plainly ("not yet connected to {hero}").
+"""
+ENSEMBLE_LEAD = """This book follows several main characters in turn. Nobody is "the main
+character", and nobody is described by their tie to one hero.
+"""
+ENSEMBLE_FOURTH = "<who they are and their role>"
+ENSEMBLE_TIE = """  Say what they are (a soldier, a lord's steward, a servant, a queen, a
+  teacher, a cat...) and their most important tie to another named person,
+  if this passage or the reader's notes show one (family, sworn to, ally,
+  enemy, servant of...), then, if there is room, the one thing that sets
+  them apart, as of the end of this passage. Never infer family ties or
+  relationships from anything else. 6 to 20 words. Examples: "Harry's best
+  friend, a fellow student from a big poor family"; "the town's magistrate,
+  Wren's uncle".
+"""
+
+LEAD_FR = """Le personnage principal de tout le livre est {hero}, y compris dans les passages
+où {hero} n'apparaît pas. Personne d'autre n'est jamais « le personnage principal ».
+"""
+FOURTH_FR = "<son lien avec {hero} et son rôle>"
+TIE_FR = """  N'indiquez un lien avec {hero} QUE si ce passage ou les notes du
   lecteur le montrent ou le disent. Ne déduisez jamais de liens familiaux ou
   de relations d'autre chose ; si rien ne la relie à {hero},
   commencez par « pas encore lié à {hero} » puis donnez son rôle. Sinon :
@@ -216,22 +260,22 @@ groupes, les espèces, les lieux, les organisations et les objets.
   place, ce qui la distingue, tels qu'à la fin de ce passage. De 6 à 20 mots.
   Exemples : « meilleur ami de Harry, un camarade d'école d'une grande famille
   pauvre » ; « pas encore lié à Wren ; le magistrat de la ville ».
-  Si les notes du lecteur décrivent déjà cette personne, PARTEZ de cette
-  description et ajoutez ce que ce passage change. N'écrivez jamais une
-  description plus vague ou plus courte que celle des notes, et ne décrivez
-  jamais quelqu'un seulement par ce qu'il a fait dans cette scène. Faux :
-  « serrant une potion, fixant Carl ». Juste : « la compagne de Frank, une
-  candidate qui a tendu une embuscade à Carl ».
-  Pour {hero} lui-même, écrivez : le personnage principal.
-
-{before}Passage :
-{text}
 """
-
-BEFORE_FR = """Juste avant ce passage (pour le contexte seulement - ne le résumez pas,
-et ne listez personne qui s'y trouve sans être aussi dans le passage) :
-{text}
-
+TIE_END_FR = """  Pour {hero} lui-même, écrivez : le personnage principal.
+"""
+ENSEMBLE_LEAD_FR = """Ce livre suit tour à tour plusieurs personnages principaux. Personne n'est
+« le personnage principal », et personne n'est décrit par son lien avec un seul héros.
+"""
+ENSEMBLE_FOURTH_FR = "<qui est cette personne et son rôle>"
+ENSEMBLE_TIE_FR = """  Dites ce qu'elle est (un soldat, l'intendant d'un seigneur, un domestique,
+  une reine, un professeur, un chat...) et son lien le plus important avec
+  une autre personne nommée, si ce passage ou les notes du lecteur en
+  montrent un (famille, vassal de, allié, ennemi, au service de...), puis,
+  s'il reste de la place, ce qui la distingue, tels qu'à la fin de ce
+  passage. Ne déduisez jamais de liens familiaux ou de relations d'autre
+  chose. De 6 à 20 mots. Exemples : « meilleur ami de Harry, un camarade
+  d'école d'une grande famille pauvre » ; « le magistrat de la ville, oncle
+  de Wren ».
 """
 
 LEAN = """
@@ -330,6 +374,32 @@ dure - qui elle est, ce qu'elle est, où elle en est avec {hero} - et non un
 seul événement. Répondez par la ligne seule.
 """
 
+WHO_ENSEMBLE = """Here is how one character, {name}, was described at points
+through a book, earliest first:
+{lines}
+
+In one line of 6 to 18 words, say what {name} is (their species, job or
+title) and their most important tie to another named person, as of the END
+of the book. Use only the lines above. Some lines name other people: a
+species, job or title that a line gives to someone else is not {name}'s.
+Where lines disagree, go with what most of them say. Say what lasts, not
+one event, which the next book's reader no longer needs. Answer with the
+line only.
+"""
+
+WHO_ENSEMBLE_FR = """Voici comment un personnage, {name}, a été décrit au fil d'un
+livre, du plus ancien au plus récent :
+{lines}
+
+En une ligne de 6 à 18 mots, dites ce que {name} est (espèce, métier ou
+titre) et son lien le plus important avec une autre personne nommée, à la
+FIN du livre. N'utilisez que les lignes ci-dessus. Certaines lignes nomment
+d'autres personnes : une espèce, un métier ou un titre qu'une ligne donne à
+quelqu'un d'autre n'est pas celui de {name}. Si les lignes se contredisent,
+suivez la majorité. Dites ce qui dure, et non un seul événement. Répondez
+par la ligne seule.
+"""
+
 #: everything a recap run says in the book's own language
 TEXT = {
     "en": {"system": SYSTEM, "hero_prompt": HERO_PROMPT, "prompt": PROMPT,
@@ -338,6 +408,11 @@ TEXT = {
            "main": "the main character", "unlinked": "not yet connected to %s",
            "notes": NOTES, "pov": POV, "story_prompt": STORY_PROMPT,
            "who_prompt": WHO_PROMPT, "this_book": "this book",
+           "lead": LEAD, "fourth": FOURTH, "tie": TIE, "tie_end": TIE_END,
+           "ensemble": {"lead": ENSEMBLE_LEAD, "fourth": ENSEMBLE_FOURTH,
+                        "tie": ENSEMBLE_TIE, "tie_end": "",
+                        "who_prompt": WHO_ENSEMBLE},
+           "around": "the people around them", "leads": "the main characters",
            "part_of_book": "part of a book",
            "series_people": "From earlier books - who people are:",
            "series_terms": "Words this series uses:",
@@ -351,6 +426,11 @@ TEXT = {
            "main": "le personnage principal", "unlinked": "pas encore lié à %s",
            "notes": NOTES_FR, "pov": POV_FR, "story_prompt": STORY_PROMPT_FR,
            "who_prompt": WHO_PROMPT_FR, "this_book": "ce livre",
+           "lead": LEAD_FR, "fourth": FOURTH_FR, "tie": TIE_FR, "tie_end": TIE_END_FR,
+           "ensemble": {"lead": ENSEMBLE_LEAD_FR, "fourth": ENSEMBLE_FOURTH_FR,
+                        "tie": ENSEMBLE_TIE_FR, "tie_end": "",
+                        "who_prompt": WHO_ENSEMBLE_FR},
+           "around": "les gens qui l'entourent", "leads": "les personnages principaux",
            "part_of_book": "une partie d'un livre",
            "series_people": "Des livres précédents - qui sont les gens :",
            "series_terms": "Mots propres à cette série :",
@@ -508,12 +588,11 @@ class RecapStage(Stage):
             memory = series_memory.Memory.open(getattr(rc, "series_dir", "") or None, series)
             view = memory.before(index)
         ctx.report("finding the main character (%d passages to go)" % len(passages))
-        fixed = (getattr(rc, "main_character", "") or "").strip()
-        # the series already settled who its lead is; a book that opens on
-        # someone else (DCC 2 and 3 came out as Donut's) does not reopen it
-        hero = fixed or (view.lead if view and view.lead else "") or \
-            _hero(ctx, docs, lang, answers)
-        ctx.note("main character: %s" % hero)
+        hero = _lead_for(ctx, rc, view, docs, lang, answers)
+        if hero:
+            ctx.note("main character: %s" % hero)
+        else:
+            ctx.note("no single main character: the book follows several people")
         if view:
             ctx.note("series memory: %s, %d people from the books before book %s"
                      % (series, len(view.people), index))
@@ -524,6 +603,7 @@ class RecapStage(Stage):
         running = bool(getattr(rc, "running_memory", True))
         story_too = bool(getattr(rc, "running_story", False))
         pov = words["pov"].format(hero=hero) if first_person else ""
+        lead_parts = _prompt_parts(words, hero)
 
         def remembered(name, known):
             """Who the reader knows this person to be before the passage."""
@@ -565,10 +645,11 @@ class RecapStage(Stage):
             if known and lean:
                 listed = "\n".join("- %s (%s): %s" % (n, words[st], rel or "?")
                                     for n, (st, rel) in list(known.items())[-80:])
-                before = words["lean"].format(known=listed, hero=hero).lstrip() + "\n" + before
+                before = words["lean"].format(
+                    known=listed, hero=hero or words["around"]).lstrip() + "\n" + before
             before = notes_for(text, known, earlier) + before
-            prompt = words["prompt"].format(hero=hero, text=text[:16000], before=before,
-                                            pov=pov)
+            prompt = words["prompt"].format(text=text[:16000], before=before, pov=pov,
+                                            **lead_parts)
             try:
                 reply = answers.ask(ctx.provider, prompt, words["system"],
                                     usable=lambda t: any(_parse(t)))
@@ -581,7 +662,7 @@ class RecapStage(Stage):
                 return None
             if known and lean:
                 people = _with_known(people, known, paras)
-            here = first_person or _hero_here(hero, paras)
+            here = not hero or first_person or _hero_here(hero, paras)
             people = [(n, st, i, _settle_tie(r, hero, here, remembered(n, known), lang))
                       for n, st, i, r in people]
             return (item, summary, people)
@@ -651,6 +732,8 @@ class RecapStage(Stage):
         meta = [("format", str(FORMAT)), ("passage_words", str(passage_words)),
                 ("model", kept_meta.get("model", model) if cast_only else model),
                 ("main_character", hero), ("language", lang)]
+        if not hero:
+            meta.append(("ensemble", "1"))
         if cast_only:
             meta.append(("people_model", model))
         if first_person:
@@ -724,6 +807,8 @@ def reading_order(books):
 
 
 def _first_person_setting(rc, docs, lang: str, hero: str) -> bool:
+    if not hero:
+        return False
     setting = str(getattr(rc, "first_person", "auto") or "auto").strip().lower()
     if setting in ("yes", "true", "1", "on"):
         return hero not in NARRATORS
@@ -910,7 +995,8 @@ def _remember(ctx, memory, index, hero, first_person, parts, people, words) -> N
             # the main cast gets one line written from everything the book
             # said about them, not just the last mention
             try:
-                prompt = words["who_prompt"].format(
+                who_prompt = words["who_prompt"] if hero else words["ensemble"]["who_prompt"]
+                prompt = who_prompt.format(
                     name=who, hero=hero, lines="\n".join("- " + t for t in linked[-10:]))
                 got = provider.complete(prompt, system=words["system"]).text
                 got = _tidy(got.strip().splitlines()[0].strip(" -\"'*"), 20) if got.strip() else ""
@@ -922,10 +1008,10 @@ def _remember(ctx, memory, index, hero, first_person, parts, people, words) -> N
         if desc:
             final[who] = desc
     summaries = [s for *_x, s in parts if s]
-    story = _story(provider, summaries, hero, words)
+    story = _story(provider, summaries, hero or words["leads"], words)
     memory.reload()                 # keep any hand fix made during this book
     memory.record_book(index, _book_title(ctx.path), story, final,
-                       lead=hero, first_person=first_person)
+                       lead=hero, first_person=first_person, ensemble=not hero)
     memory.save()
     ctx.note("series memory updated: %s (%d people)" % (memory.path, len(final)))
 
@@ -1317,6 +1403,84 @@ def _tail(paras, chars: int = 900) -> str:
 
 
 # ------------------------------------------------------------ the model
+
+
+#: main_character values that mean "this book has none"
+NO_LEAD = {"none", "-", "ensemble", "aucun", "personne"}
+
+
+def _prompt_parts(words, hero: str) -> dict:
+    """PROMPT's lead-dependent pieces: around `hero`, or for no one."""
+    w = {**words, **words["ensemble"]} if not hero else words
+    return {k: w[k].format(hero=hero) for k in ("lead", "fourth", "tie", "tie_end")}
+
+
+def _lead_for(ctx, rc, view, docs, lang, answers) -> str:
+    """Who the book's who's who is written around, or "" for no one.
+
+    - main_character in the settings wins ("none" means no one).
+    - A series the memory knows follows several people stays that way.
+    - The series' lead carries over while they are still in most chapters:
+      DCC 2 and 3 open on Donut, and must not reopen who the lead is. A
+      lead who has gone (Eddard, in A Clash of Kings) does not.
+    - Otherwise the book's own lead, unless it follows several people.
+    """
+    fixed = (getattr(rc, "main_character", "") or "").strip()
+    if fixed.lower() in NO_LEAD:
+        return ""
+    if fixed:
+        return fixed
+    if view and view.ensemble:
+        return ""
+    lead = view.lead if view and view.lead else ""
+    if lead and _share(lead, docs) >= 0.5:
+        return lead
+    if lead:
+        ctx.note("%s, the series' main character, is in few chapters of this book" % lead)
+    hero = _hero(ctx, docs, lang, answers)
+    if _ensemble(docs, hero):
+        return ""
+    return hero
+
+
+def _share(name: str, docs) -> float:
+    """The part of the book's chapters that name `name`."""
+    words = [w for w in re.findall(r"[\w'’-]+", _bare(name))
+             if w[:1].isupper() and w.lower() not in _NOT_A_NAME]
+    if not docs or not words:
+        return 1.0
+    pat = re.compile(r"(?<![\w])%s(?![\w])" % re.escape(words[0]))
+    hits = sum(1 for _o, _p, _l, paras in docs if any(pat.search(t) for _n, t in paras))
+    return hits / len(docs)
+
+
+def _viewpoints(docs) -> dict:
+    """{name: chapters} for chapters titled with a character's name: the
+    shape of a book told by turns ("TYRION", "Catelyn", "Chapter 3: Jon")."""
+    from collections import Counter
+
+    names = {n.lower() for n in _recurring_names(docs, keep=40)}
+    got = Counter()
+    for _o, _p, label, _paras in docs:
+        hit = [w for w in re.findall(r"[A-Za-zÀ-ÿ'’-]+", label or "") if w.lower() in names]
+        if hit:
+            got[hit[0].title()] += 1
+    return dict(got)
+
+
+def _ensemble(docs, hero: str) -> bool:
+    """Does the book follow several people in turn, rather than one lead?
+
+    Yes when three or more characters each title chapters of their own and
+    together they title much of the book, or when the chosen lead is in few
+    of its chapters.
+    """
+    if hero in NARRATORS or len(docs) < 6:
+        return False
+    pov = {n: c for n, c in _viewpoints(docs).items() if c >= 2}
+    if len(pov) >= 3 and sum(pov.values()) >= 0.4 * len(docs):
+        return True
+    return bool(hero) and _share(hero, docs) < 0.25
 
 
 def _hero(ctx: Context, docs, lang: str = "en", answers=None) -> str:
