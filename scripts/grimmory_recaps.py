@@ -51,7 +51,9 @@ import zipfile
 from pathlib import Path
 
 HOME = Path.home()
-BACKUPS = HOME / "recap-backups"
+# GRECAPS_HOME: a separate folder for a trial run (its own lock, settings,
+# state and backups), so it can go while the main run is paused
+BACKUPS = Path(os.environ.get("GRECAPS_HOME") or HOME / "recap-backups").expanduser()
 STATE = BACKUPS / "grimmory-recaps.json"
 LOG = BACKUPS / "log.tsv"
 CONFIG = BACKUPS / "epubkit-recaps.toml"
