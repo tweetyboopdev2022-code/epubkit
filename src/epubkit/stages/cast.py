@@ -1,0 +1,765 @@
+"""The who's who, built from the whole book at once rather than passage by passage.
+
+The passage-by-passage who's who asked the model, every few pages, for
+everyone in the scene and a line on each. Over a long series that went wrong
+in ways one prompt could not fix (Dungeon Crawler Carl 5, Oct 2026): Carl was
+only ever "the main character"; Mordecai and Katia had the same line again and
+again; "Katia Grim" and "Elle McGib" were names cut short; the Syndicate,
+Borant and the Princess Posse were listed as people; Donut "conquered
+Cleveland", which the book never says; and "not yet connected to Carl" was
+shown to the reader as if it were a fact.
+
+So this builds the cast first and writes about people second:
+
+1. **Names come from the text.** Every capitalised name the book uses, found
+   by searching it, so a name the model shortened or invented cannot appear.
+2. **One question sorts them** into people, groups, places, things and
+   real-world names the story only refers to, and says who the story treats
+   as someone to keep track of. Only people are listed: everyone named who
+   matters, and anyone met, or talked about often, even if never met.
+3. **One entry per person, rewritten only when something lasting changes.**
+   The first is written from where the book introduces them; after that, at
+   each checkpoint, the model gets the entry so far and what the book has
+   said about them since, and answers SAME unless who they are has moved on.
+   One or two sentences. The main character gets a real entry, not a label.
+4. **Every entry is checked in code before it is used:** it must quote the
+   extracts it was written from, every proper name and number in it must be
+   in those extracts or in what the earlier books said, it must not talk about
+   "the extracts" or "the reader", and it must not be another person's entry.
+   A failed entry is asked for once more with the problems listed, and then
+   left out rather than shown.
+
+Nothing here is ever told about a paragraph past the row it is filed at.
+Rows have the same shape as before, so the Kobo side does not change.
+"""
+from __future__ import annotations
+
+import difflib
+import re
+import threading
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+
+# ------------------------------------------------------------------ prompts
+
+SYSTEM = ("You write short, factual who's-who entries for readers of a novel. "
+          "You only state what the extracts you are given say.")
+
+SORT = """Below are names found in the book "{title}", each with a line where it appears.
+
+For each name, answer on one line, in the same order:
+Name | kind | matters
+
+kind is one of:
+- person: one individual in the story, including an animal, an AI, a god or a monster with a name
+- group: a family, team, party, company, species, organisation, government or crowd
+- place: a planet, country, city, building, floor, room or region
+- thing: an object, item, spell, skill, title, show, ship, brand or event
+- real: a real-world person the story only refers to (an author, an actor, a historical figure) who does not take part
+- other: anything else, or not a name at all
+
+matters is yes if the story treats them as someone the reader should keep track of, no if they are only a passing mention.
+
+Names:
+{names}"""
+
+INTRO = """You are writing a who's-who entry for a reader of "{title}". The reader has read up to the end of the extracts below and nothing after them.
+{about}
+Person: {name}{also}
+{known}
+Extracts that mention them, in order (the last is where the reader is now):
+{extracts}
+
+Answer in exactly three lines:
+QUOTE: <copy a few words, exactly, from the extract that best shows who they are>
+STATUS: met or heard (met = they have appeared in person; heard = so far they are only talked about)
+ENTRY: <one or two short sentences saying who {name} is and why they matter to the story so far>
+
+Rules for ENTRY:
+- Only what the extracts or the earlier books say. No guesses, nothing about what comes later.
+- Say who they are: what they are, their role, and who they are to the other people named.
+- Never write "the main character", "the protagonist", "not yet connected", or anything about "the extracts", "the passage" or "the reader".
+- Do not start with their name."""
+
+UPDATE = """You keep a who's-who entry up to date for a reader of "{title}". The reader has read up to the end of the extracts below and nothing after them.
+{about}
+Person: {name}{also}
+{known}
+Their entry so far:
+{current}
+
+What the book has said about them since, in order:
+{extracts}
+
+Has anything lasting changed about who {name} is: a new role, a new relationship, something revealed, a change in what they are? A single scene is not a change.
+
+Answer in exactly three lines:
+QUOTE: <copy a few words, exactly, from the extract that shows the change, or - if nothing changed>
+STATUS: met or heard (met = they have appeared in person by now; heard = so far they are only talked about)
+ENTRY: SAME if nothing lasting changed; otherwise the whole entry again, as one or two short sentences, keeping what is still true
+
+Rules for ENTRY:
+- Only what the extracts, the entry so far or the earlier books say. No guesses, nothing about what comes later.
+- Never write "the main character", "the protagonist", "not yet connected", or anything about "the extracts", "the passage" or "the reader".
+- Do not start with their name."""
+
+AGAIN = """
+
+Your last answer could not be used:
+{problems}
+Answer again in the same three lines."""
+
+SYSTEM_FR = ("Vous rédigez des fiches courtes et factuelles sur les personnages d'un roman. "
+             "Vous n'affirmez que ce que disent les extraits fournis.")
+
+SORT_FR = """Voici des noms trouvés dans le livre « {title} », chacun avec une ligne où il apparaît.
+
+Pour chaque nom, répondez sur une ligne, dans le même ordre :
+Nom | type | compte
+
+type est l'un de :
+- person : une personne de l'histoire, y compris un animal, une IA, un dieu ou un monstre qui a un nom
+- group : une famille, une équipe, une entreprise, une espèce, une organisation, un gouvernement ou une foule
+- place : une planète, un pays, une ville, un bâtiment, une pièce ou une région
+- thing : un objet, un sort, un titre, une émission, un navire, une marque ou un événement
+- real : une personne réelle que l'histoire ne fait que citer (un auteur, un acteur, un personnage historique)
+- other : autre chose, ou pas un nom
+
+compte vaut yes si l'histoire en fait quelqu'un que le lecteur doit suivre, no s'il n'est que cité en passant.
+
+Noms :
+{names}"""
+
+INTRO_FR = """Vous rédigez une fiche de personnage pour un lecteur de « {title} ». Le lecteur a lu jusqu'à la fin des extraits ci-dessous, et rien au-delà.
+{about}
+Personnage : {name}{also}
+{known}
+Extraits qui le mentionnent, dans l'ordre (le dernier est l'endroit où en est le lecteur) :
+{extracts}
+
+Répondez en exactement trois lignes :
+QUOTE: <recopiez exactement quelques mots de l'extrait qui montre le mieux qui c'est>
+STATUS: met ou heard (met = le personnage est apparu en personne ; heard = on n'a fait qu'en parler)
+ENTRY: <une ou deux phrases courtes, en français, qui disent qui est {name} et pourquoi il compte pour l'histoire jusqu'ici>
+
+Règles pour ENTRY :
+- Seulement ce que disent les extraits ou les livres précédents. Aucune supposition, rien de la suite.
+- Dites qui c'est : ce qu'il est, son rôle, et ce qu'il est pour les autres personnages cités.
+- N'écrivez jamais « le personnage principal », « pas encore lié », ni rien sur « les extraits », « le passage » ou « le lecteur ».
+- Ne commencez pas par son nom."""
+
+UPDATE_FR = """Vous tenez à jour la fiche d'un personnage pour un lecteur de « {title} ». Le lecteur a lu jusqu'à la fin des extraits ci-dessous, et rien au-delà.
+{about}
+Personnage : {name}{also}
+{known}
+Sa fiche jusqu'ici :
+{current}
+
+Ce que le livre a dit de ce personnage depuis, dans l'ordre :
+{extracts}
+
+Quelque chose de durable a-t-il changé : un nouveau rôle, un nouveau lien, une révélation, un changement de nature ? Une seule scène n'est pas un changement.
+
+Répondez en exactement trois lignes :
+QUOTE: <recopiez exactement quelques mots de l'extrait qui montre le changement, ou ->
+STATUS: met ou heard
+ENTRY: SAME si rien de durable n'a changé ; sinon toute la fiche, en une ou deux phrases courtes, en français, en gardant ce qui reste vrai
+
+Règles pour ENTRY :
+- Seulement ce que disent les extraits, la fiche ou les livres précédents. Aucune supposition, rien de la suite.
+- N'écrivez jamais « le personnage principal », « pas encore lié », ni rien sur « les extraits », « le passage » ou « le lecteur ».
+- Ne commencez pas par son nom."""
+
+AGAIN_FR = """
+
+Votre réponse précédente n'est pas utilisable :
+{problems}
+Répondez de nouveau en trois lignes."""
+
+WORDS = {
+    "en": {
+        "system": SYSTEM, "sort": SORT, "intro": INTRO, "update": UPDATE, "again": AGAIN,
+        "lead": "The story's main character is {hero}.",
+        "first_person": "{hero} tells the story as \"I\": every \"I\" in the narration is {hero}.",
+        "ensemble": "The story follows several main characters in turn.",
+        "hero_own": "{name} is the story's main character: say who they are, not that.",
+        "also": " (also called {forms})",
+        "known": "What the earlier books in the series said about them: {line}",
+        "unknown": "",
+        "problems": {
+            "shape": "it was not three lines starting QUOTE:, STATUS: and ENTRY:",
+            "quote": "the QUOTE is not words copied from the extracts",
+            "leak": "the ENTRY talks about the extracts, the reader, or is a placeholder",
+            "unbacked": "the ENTRY names {what}, which the extracts do not",
+            "long": "the ENTRY is longer than two short sentences",
+            "short": "the ENTRY is too short to say who they are",
+            "theirs": "the ENTRY is the one written for {who}",
+            "guess": "most of the ENTRY is not in the extracts",
+        },
+    },
+    "fr": {
+        "system": SYSTEM_FR, "sort": SORT_FR, "intro": INTRO_FR, "update": UPDATE_FR,
+        "again": AGAIN_FR,
+        "lead": "Le personnage principal de l'histoire est {hero}.",
+        "first_person": "{hero} raconte l'histoire à la première personne : chaque « je » est {hero}.",
+        "ensemble": "L'histoire suit tour à tour plusieurs personnages principaux.",
+        "hero_own": "{name} est le personnage principal : dites qui c'est, pas cela.",
+        "also": " (aussi appelé {forms})",
+        "known": "Ce que les livres précédents de la série disaient de ce personnage : {line}",
+        "unknown": "",
+        "problems": {
+            "shape": "ce n'était pas trois lignes commençant par QUOTE:, STATUS: et ENTRY:",
+            "quote": "la QUOTE n'est pas recopiée des extraits",
+            "leak": "l'ENTRY parle des extraits, du lecteur, ou ne dit rien",
+            "unbacked": "l'ENTRY cite {what}, que les extraits ne citent pas",
+            "long": "l'ENTRY dépasse deux phrases courtes",
+            "short": "l'ENTRY est trop courte pour dire qui c'est",
+            "theirs": "l'ENTRY est celle écrite pour {who}",
+            "guess": "l'essentiel de l'ENTRY n'est pas dans les extraits",
+        },
+    },
+}
+
+# ------------------------------------------------------------------ settings
+
+#: how many checkpoints a book is split into at most for updating entries
+CHECKPOINTS = 24
+#: new mentions since the last look before an entry is looked at again
+UPDATE_AFTER = 3
+#: extracts given with one question, and the characters in each
+EXTRACTS = 10
+EXTRACT_CHARS = 420
+#: names sorted in one question
+SORT_BATCH = 30
+#: at most this many words in an entry
+MAX_WORDS = 48
+
+# ------------------------------------------------------------------ names
+
+_PARTICLES = {"of", "the", "de", "du", "la", "le", "van", "von", "der", "da", "del", "di"}
+_TITLED = r"(?:Mr|Mrs|Ms|Dr|St|Mme|Mlle|M)\."
+_CAP = r"[A-ZÀ-ÖØ-Þ][\w'’\-]*"
+NAME = re.compile(
+    r"(?<![\w'’\-])(?:%s\s+)?%s(?:\s+(?:(?:%s)\s+)?%s){0,3}" % (
+        _TITLED, _CAP, "|".join(sorted(_PARTICLES)), _CAP))
+# capitalised for grammar, not names
+_COMMON = set("""
+i i'm i'd i'll i've im id ok okay yes no oh ah uh um hey hi hello yeah yep nope well
+the a an and but or so then now there here this that these those what who why how
+where when which while if as at in on of to by for from with without into onto upon
+he she it we they you me him her us them my your his its our their mine yours
+mr mrs ms dr sir madam miss lord lady chapter part book prologue epilogue interlude
+monday tuesday wednesday thursday friday saturday sunday january february march april
+may june july august september october november december
+god christ jesus heaven hell okay alright please thanks thank sorry wait look
+le la les un une des et ou mais donc puis alors je tu il elle nous vous ils elles
+mon ma mes ton ta tes son sa ses notre votre leur leurs ce cette ces qui que quoi
+oui non bon bien ah oh eh chapitre partie livre monsieur madame mademoiselle
+""".split())
+_TITLES = {"mr", "mrs", "ms", "dr", "sir", "lady", "lord", "miss", "madam", "monsieur",
+           "madame", "mademoiselle"}
+_ENDS = re.compile(r"(?:['’]s|['’])$")
+_START = re.compile(r"(?:^|[.!?…:;—–\"“”«»(\[]|\s-)\s*$")
+
+
+def _clean_name(raw: str) -> str:
+    name = _ENDS.sub("", raw.strip()).strip("-’'")
+    words = name.split()
+    # "The" or "Then" at the front is grammar; "Mr." and "Dr." are not
+    while words and words[0].lower().rstrip(".") not in _TITLES and \
+            words[0].lower() in _COMMON:
+        words = words[1:]
+    while words and words[-1].lower() in _PARTICLES:
+        words = words[:-1]
+    return " ".join(words)
+
+
+def _caps_only(name: str) -> bool:
+    letters = re.sub(r"[^\w]", "", name)
+    return len(letters) > 1 and letters.isupper()
+
+
+def find_names(docs) -> dict:
+    """Every name-like run of capitals in the book.
+
+    -> {name: {"n": times used, "mid": times not at a sentence start,
+               "first": (order, para), "line": a line it is used in}}
+    """
+    found: dict = {}
+    lower = Counter()
+    for _order, _path, _label, paras in docs:
+        for _n, text in paras:
+            lower.update(w for w in re.findall(r"(?<![\w'’])[a-zà-ÿ][\w'’]*", text))
+    for order, _path, _label, paras in docs:
+        for n, text in paras:
+            for m in NAME.finditer(text):
+                name = _clean_name(m.group(0))
+                if not name or _caps_only(name) or name.lower() in _COMMON:
+                    continue
+                if len(name) < 2:
+                    continue
+                # a name after "The", or of two words or more, is a name
+                # even at the start of a sentence: "Katia Grimaldi stepped in"
+                at_start = bool(_START.search(text[:m.start()])) and \
+                    name.split()[0] == m.group(0).split()[0] and len(name.split()) == 1
+                entry = found.setdefault(name, {"n": 0, "mid": 0, "first": (order, n),
+                                                "line": ""})
+                entry["n"] += 1
+                if not at_start:
+                    entry["mid"] += 1
+                if not entry["line"] or (not at_start and entry["mid"] == 1):
+                    entry["line"] = _around(text, m.start(), m.end(), 220)
+    out = {}
+    for name, e in found.items():
+        one = name.split()
+        if e["mid"] == 0:
+            continue            # only ever the first word of a sentence
+        if len(one) == 1 and lower[name.lower()] > 3 * e["mid"]:
+            continue            # "Hope", "Will": an ordinary word, mostly
+        out[name] = e
+    return out
+
+
+def _around(text: str, start: int, end: int, chars: int) -> str:
+    if len(text) <= chars:
+        return text.strip()
+    half = max(0, (chars - (end - start)) // 2)
+    a = max(0, start - half)
+    b = min(len(text), end + half)
+    a = text.rfind(" ", 0, a) + 1 if a else 0
+    cut = text.find(" ", b)
+    b = cut if cut != -1 else len(text)
+    return ("…" if a else "") + text[a:b].strip() + ("…" if b < len(text) else "")
+
+
+def _parse_sort(text: str) -> dict:
+    out = {}
+    for line in text.splitlines():
+        parts = [p.strip(" *-\t`\"") for p in line.split("|")]
+        if len(parts) < 2 or not parts[0]:
+            continue
+        kind = parts[1].lower().split()[0] if parts[1].split() else ""
+        matters = len(parts) > 2 and parts[2].lower().startswith(("y", "o"))
+        out[re.sub(r"^\d+[.)]\s*", "", parts[0])] = (kind, matters)
+    return out
+
+
+def sort_names(ask, names: dict, title: str, words: dict) -> dict:
+    """name -> (kind, matters), from the model, a batch of names at a time."""
+    todo = sorted(names, key=lambda n: names[n]["first"])
+    got: dict = {}
+    for size in (SORT_BATCH, 8):
+        left = [n for n in todo if n not in got]
+        for i in range(0, len(left), size):
+            batch = left[i:i + size]
+            listed = "\n".join("- %s: %s" % (n, names[n]["line"]) for n in batch)
+            try:
+                reply = ask(words["sort"].format(title=title, names=listed), words["system"],
+                            lambda t: bool(_parse_sort(t)))
+            except Exception:                               # noqa: BLE001
+                continue
+            said = _parse_sort(reply)
+            low = {k.lower(): v for k, v in said.items()}
+            for n in batch:
+                v = said.get(n) or low.get(n.lower())
+                if v:
+                    got[n] = v
+    return got
+
+
+# ------------------------------------------------------------------ entries
+
+ENTRY = re.compile(r"(?im)^\W*entry\W*:?\s*(.*)$")
+QUOTE = re.compile(r"(?im)^\W*quote\W*:?\s*(.*)$")
+STATUS = re.compile(r"(?im)^\W*status\W*:?\s*(\w+)")
+LEAK = re.compile(
+    r"(?i)\b(?:extracts?|the passages?|this passage|the reader|reader['’]s notes|"
+    r"the text|not (?:yet )?(?:connected|linked|mentioned|named|known|stated|specified|clear)|"
+    r"no (?:information|details?)|unknown|unclear|the main character|the protagonist|"
+    r"main character of|les extraits?|le passage|le lecteur|pas encore li[ée]e?s?|"
+    r"personnage principal|inconnue?)\b")
+_SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-ZÀ-Þ\"“«])")
+_STOP = set("""
+the and was that his her with for had not but you she they said have from this
+were been their them what when who will would could there about which after into
+than then also only more most some such very over just being because before while
+les des une dans qui pour sur avec elle mais sont était ses leur aussi plus
+""".split())
+
+
+def parse_entry(text: str) -> tuple[str, str, str] | None:
+    """-> (quote, met|heard|"", entry), or None when it is not the answer asked for."""
+    e = ENTRY.search(text or "")
+    if not e:
+        return None
+    q = QUOTE.search(text)
+    s = STATUS.search(text)
+    entry = e.group(1).strip().strip("\"'*` ")
+    status = s.group(1).lower() if s else ""
+    status = "met" if status.startswith(("met", "rencontr")) else \
+             "heard" if status.startswith(("heard", "entendu")) else ""
+    quote = q.group(1).strip().strip("\"'“”«»*` ") if q else ""
+    return quote, status, entry
+
+
+def _norm(s: str) -> str:
+    s = s.replace("’", "'").replace("“", '"').replace("”", '"').replace("…", "...")
+    return re.sub(r"\s+", " ", re.sub(r"[\"«»]", "", s)).strip().lower()
+
+
+def _trim(entry: str) -> str:
+    entry = re.sub(r"\s+", " ", entry).strip()
+    sentences = _SENTENCE.split(entry)
+    return " ".join(sentences[:2]).strip()
+
+
+def problems(entry: str, quote: str, source: str, name_forms, others: dict,
+             words: dict, same_ok: bool = False) -> list[str]:
+    """What is wrong with an entry, as the reasons to give the model. [] = fine.
+
+    source: the extracts and what the earlier books said - everything the
+    entry may draw on. others: the entries other people already have.
+    """
+    say = words["problems"]
+    if not entry:
+        return [say["shape"]]
+    if same_ok and _same(entry):
+        return []
+    out = []
+    plain = _norm(source)
+    q = _norm(quote).strip(". ")
+    if len(q.split()) < 2 or q not in plain:
+        # a quote stitched across a cut is still a quote if each piece of it
+        # is there word for word
+        pieces = [p for p in re.split(r"\.\.\.", q) if len(p.split()) >= 2]
+        if not pieces or not all(p.strip(" .") in plain for p in pieces):
+            out.append(say["quote"])
+    if LEAK.search(entry):
+        out.append(say["leak"])
+    n_words = len(entry.split())
+    if n_words > MAX_WORDS or len(_SENTENCE.split(entry)) > 2:
+        out.append(say["long"])
+    if n_words < 4:
+        out.append(say["short"])
+    # every proper name and number must come from what it was written from
+    have = set(re.findall(r"[\w'’\-]+", source))
+    mine = {w for f in name_forms for w in re.findall(r"[\w'’\-]+", f)}
+    missing = []
+    for i, w in enumerate(re.findall(r"[\w'’\-]+", entry)):
+        w = re.sub(r"['’]s$", "", w)
+        if w in mine or w in have:
+            continue
+        if w.isdigit() or (w[:1].isupper() and i > 0 and not _starts_sentence(entry, w)):
+            if w.lower() not in _COMMON and w not in missing:
+                missing.append(w)
+    if missing:
+        out.append(say["unbacked"].format(what=", ".join(missing[:5])))
+    # and most of what it says should be in there in some form
+    content = [w.lower() for w in re.findall(r"[^\W\d_]{5,}", entry)
+               if w.lower() not in _STOP and w not in mine]
+    if len(content) >= 6:
+        stems = {w.lower()[:5] for w in have}
+        if sum(1 for w in content if w[:5] in stems) < 0.4 * len(content):
+            out.append(say["guess"])
+    for who, theirs in others.items():
+        if theirs and difflib.SequenceMatcher(None, _norm(theirs), _norm(entry)).ratio() >= 0.85:
+            out.append(say["theirs"].format(who=who))
+            break
+    return out
+
+
+def _same(entry: str) -> bool:
+    return bool(re.match(r"(?i)\W*(?:same|m[êe]me)\b", entry))
+
+
+def _starts_sentence(entry: str, word: str) -> bool:
+    return bool(re.search(r"(?:^|[.!?]\s+)%s\b" % re.escape(word), entry))
+
+
+# ------------------------------------------------------------------ the book
+
+
+def _pos(order: int, para: int) -> int:
+    return order * 1_000_000 + para
+
+
+def checkpoints(docs, most: int = CHECKPOINTS) -> list[tuple[int, str, int]]:
+    """Where entries are looked at again: chapter ends, merged so a book has
+    at most `most` of them. -> [(order, path, last paragraph)]"""
+    sizes = [sum(len(t) for _n, t in paras) for _o, _p, _l, paras in docs]
+    total = sum(sizes) or 1
+    step = total / max(1, most)
+    out, run = [], 0
+    for (order, path, _label, paras), size in zip(docs, sizes, strict=True):
+        run += size
+        if run >= step or (order, path) == (docs[-1][0], docs[-1][1]):
+            if paras:
+                out.append((order, path, paras[-1][0]))
+            run = 0
+    return out
+
+
+def _form_pattern(forms) -> re.Pattern:
+    alts = sorted({f for f in forms if f}, key=len, reverse=True)
+    return re.compile(r"(?<![\w'’\-])(?:%s)(?![\w\-])" % "|".join(re.escape(f) for f in alts))
+
+
+def _mentions(docs, forms) -> list[tuple[int, str, int, str]]:
+    """Every paragraph naming the person: [(order, path, para, extract)]."""
+    pat = _form_pattern(forms)
+    out = []
+    for order, path, _label, paras in docs:
+        for n, text in paras:
+            m = pat.search(text)
+            if m:
+                out.append((order, path, n, _around(text, m.start(), m.end(), EXTRACT_CHARS)))
+    return out
+
+
+def _spread(items, k: int):
+    """At most k items, spread out, always keeping the last."""
+    if len(items) <= k:
+        return list(items)
+    step = (len(items) - 1) / (k - 1)
+    return [items[round(i * step)] for i in range(k)]
+
+
+def _following(docs, order: int, para: int, k: int = 2) -> list[str]:
+    """The paragraphs right after a first mention, in the same chapter: how
+    the book goes on to introduce someone."""
+    for o, _p, _l, paras in docs:
+        if o != order:
+            continue
+        idx = next((i for i, (n, _t) in enumerate(paras) if n == para), None)
+        if idx is None:
+            return []
+        return [t[:EXTRACT_CHARS] for _n, t in paras[idx + 1: idx + 1 + k]]
+    return []
+
+
+class Person:
+    def __init__(self, name: str, forms, matters: bool):
+        self.name = name
+        self.forms = sorted(set(forms) | {name}, key=len, reverse=True)
+        self.matters = matters
+        self.mentions: list = []
+        self.rows: list = []            # (order, path, para, status, entry)
+        self.entry = ""
+        self.status = "heard"
+        self.asked = 0
+        self.retried = 0
+        self.failed = 0
+
+
+def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
+          lang: str = "en", view=None, title: str = "", workers: int = 1):
+    """-> (people rows, report lines). Rows are
+    (order, path, para, name, met|heard, times named so far, entry)."""
+    words = WORDS.get(lang, WORDS["en"])
+    report: list[str] = []
+    ctx.report("who's who: finding names")
+    names = find_names(docs)
+    remembered = set()
+    if view:
+        for n in list(names):
+            if view.name_of(n, True):
+                remembered.add(n)
+    # a name used once is a passing mention, unless the earlier books know it
+    asked_about = {n: e for n, e in names.items()
+                   if e["n"] >= 2 or n in remembered or (hero and n == hero)}
+    ctx.report("who's who: sorting %d names" % len(asked_about))
+    kinds = sort_names(ask, asked_about, title, words)
+    by_kind = Counter(k for k, _m in kinds.values())
+    report.append("%d names found; %d asked about: %s" % (
+        len(names), len(asked_about),
+        ", ".join("%d %s" % (c, k) for k, c in by_kind.most_common())))
+    # keep everyone named who matters, anyone talked about often, anyone the
+    # earlier books know; never a group, a place, a thing or a real author
+    keep = []
+    for n, e in asked_about.items():
+        kind, matters = kinds.get(n, ("", False))
+        if kind != "person":
+            if kind == "" and (n in remembered or n == hero):
+                keep.append(n)
+            continue
+        if matters or e["n"] >= 4 or n in remembered or n == hero:
+            keep.append(n)
+    set_aside = sorted((n for n in asked_about if kinds.get(n, ("",))[0] in
+                        ("group", "real")), key=lambda n: -asked_about[n]["n"])
+    if set_aside:
+        report.append("not people: " + ", ".join(set_aside[:40]))
+
+    # one person, however many names: "Harry", "Harry Potter", "Mr. Potter"
+    # are not all one, but the first two are
+    from ..tools import dedupe_cast
+    order = sorted(keep, key=lambda n: _pos(*names[n]["first"]))
+    try:
+        ident = dedupe_cast.identities([(_pos(*names[n]["first"]), "", n, "") for n in order])
+    except Exception:                                       # noqa: BLE001
+        ident = {n: n for n in order}
+    groups: dict[str, list[str]] = {}
+    for n in order:
+        shown = ident.get(n) or n
+        if view:
+            shown = view.name_of(shown, True) or view.name_of(n, True) or shown
+        groups.setdefault(shown, []).append(n)
+    people = []
+    for shown, forms in groups.items():
+        matters = any(kinds.get(f, ("", False))[1] for f in forms)
+        p = Person(shown, forms, matters)
+        p.mentions = _mentions(docs, p.forms)
+        if p.mentions:
+            people.append(p)
+    people.sort(key=lambda p: -len(p.mentions))
+    ctx.note("who's who: %d people from %d names" % (len(people), len(names)))
+
+    about = []
+    if hero:
+        about.append(words["first_person" if first_person else "lead"].format(hero=hero))
+    else:
+        about.append(words["ensemble"])
+    marks = checkpoints(docs)
+    done = [0]
+    lock = threading.Lock()
+    current: dict[str, str] = {}
+
+    def known_line(p) -> str:
+        line = view.tie(p.name) if view else ""
+        return words["known"].format(line=line) if line else words["unknown"]
+
+    def one_question(p, template, extracts, current_entry=""):
+        known = known_line(p)
+        others_forms = [f for f in p.forms if f != p.name]
+        prompt = template.format(
+            title=title, about="\n".join(about + ([words["hero_own"].format(name=p.name)]
+                                                  if hero and p.name == hero else [])),
+            name=p.name, also=words["also"].format(forms=", ".join(others_forms[:4]))
+            if others_forms else "", known=known,
+            extracts="\n".join("%d. %s" % (i + 1, x) for i, x in enumerate(extracts)),
+            current=current_entry)
+        source = "\n".join(extracts + [known, current_entry] + about)
+        update = bool(current_entry)
+        reason = []
+        for attempt in range(2):
+            text = prompt + (words["again"].format(problems="\n".join("- " + r for r in reason))
+                             if attempt else "")
+            p.asked += 1
+            try:
+                reply = ask(text, words["system"], lambda t: parse_entry(t) is not None)
+            except Exception:                               # noqa: BLE001
+                reply = ""
+            got = parse_entry(reply)
+            if not got:
+                reason = [words["problems"]["shape"]]
+                continue
+            quote, status, entry = got
+            entry = _trim(entry)
+            with lock:
+                others = {w: e for w, e in current.items() if w != p.name}
+            reason = problems(entry, quote, source, p.forms, others, words, same_ok=update)
+            if not reason:
+                if attempt:
+                    p.retried += 1
+                if update and _same(entry):
+                    return status, ""
+                return status, entry
+        p.failed += 1
+        ctx.log.debug("    who's who: %s left out: %s", p.name, "; ".join(reason))
+        return "", None
+
+    def write(p):
+        first = p.mentions[0]
+        f_order, f_path, f_para = first[0], first[1], first[2]
+        extracts = [first[3]] + _following(docs, f_order, f_para)
+        status, entry = one_question(p, words["intro"], extracts)
+        last_seen = 0
+        lead = bool(hero) and p.name == hero
+        if entry:
+            p.entry, p.status = entry, "met" if lead else (status or "heard")
+            p.rows.append((f_order, f_path, f_para, p.status, entry))
+            with lock:
+                current[p.name] = entry
+        # main and supporting people are looked at again as the book goes on
+        regular = p.matters or len(p.mentions) >= 8 or lead
+        for m_order, m_path, m_para in marks:
+            upto = _pos(m_order, m_para)
+            if upto < _pos(f_order, f_para):
+                continue
+            new = [x for x in p.mentions[last_seen:] if _pos(x[0], x[2]) <= upto
+                   and _pos(x[0], x[2]) > _pos(f_order, f_para)]
+            if not new:
+                continue
+            enough = len(new) >= (UPDATE_AFTER if regular else UPDATE_AFTER * 2)
+            if not enough and p.entry:
+                continue
+            last_seen = p.mentions.index(new[-1]) + 1
+            picked = [x[3] for x in _spread(new, EXTRACTS)]
+            if p.entry:
+                status, entry = one_question(p, words["update"], picked, p.entry)
+            else:
+                # the first entry failed its checks: try again from here
+                status, entry = one_question(p, words["intro"], picked)
+            if entry is None:
+                continue
+            was_met = p.status == "met"
+            if status == "met":
+                p.status = "met"
+            if entry:
+                p.entry = entry
+                with lock:
+                    current[p.name] = entry
+            # the lead is filed again at every checkpoint, so their count
+            # (and their place at the top of the list) keeps up
+            if entry or (p.entry and (lead or (p.status == "met" and not was_met))):
+                p.rows.append((m_order, m_path, m_para, p.status, p.entry))
+            if not regular and p.entry:
+                break               # a minor figure gets one entry, maybe a second
+        with lock:
+            done[0] += 1
+            ctx.report("who's who: %d/%d people" % (done[0], len(people)))
+
+    ctx.report("who's who: 0/%d people" % len(people))
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            list(pool.map(write, people))
+    else:
+        for p in people:
+            write(p)
+
+    rows = _rows(people, hero)
+    shown = [p for p in people if p.rows]
+    report.append("%d people written, %d left out after failing the checks twice; "
+                  "%d questions, %d answers fixed on a second try" % (
+                      len(shown), sum(1 for p in people if not p.rows),
+                      sum(p.asked for p in people), sum(p.retried for p in people)))
+    lost = [p.name for p in people if not p.rows]
+    if lost:
+        report.append("left out: " + ", ".join(lost[:40]))
+    return rows, report
+
+
+def _rows(people, hero: str):
+    """Rows for people.tsv, sorted by position, with the running count of
+    times each person has been named by then. The main character's count is
+    kept above everyone's, so the device lists them first."""
+    events = []
+    for p in people:
+        for order, path, para, status, entry in p.rows:
+            events.append((_pos(order, para), order, path, para, p, status, entry))
+    events.sort(key=lambda e: (e[0], e[4].name))
+    out = []
+    top = 0
+    for pos, order, path, para, p, status, entry in events:
+        seen = sum(1 for m in p.mentions if _pos(m[0], m[2]) <= pos)
+        top = max(top, seen)
+        if hero and p.name == hero:
+            seen = max(seen, top + 1)
+        out.append((order, path, para, p.name, status, seen, entry))
+    # met is for good once it is true
+    met: set = set()
+    fixed = []
+    for r in out:
+        if r[4] == "met":
+            met.add(r[3])
+        fixed.append(r if r[3] not in met else r[:4] + ("met",) + r[5:])
+    return fixed

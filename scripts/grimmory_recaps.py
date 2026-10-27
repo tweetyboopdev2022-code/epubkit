@@ -268,10 +268,14 @@ def write_config(args) -> Path:
         "[recaps]\nenabled = true\npassage_words = %d\ncast = true\n"
         "main_character = %s\n"
         "cast_only = %s\nkeep_recaps = %s\n"
+        "cast_method = %s\ncast_report_dir = %s\nseries_dir = %s\n"
         % (args.model, args.endpoint, args.concurrency, args.passage_words,
            json.dumps(args.main_character or ""),
            "true" if getattr(args, "characters_only", False) else "false",
-           "true" if getattr(args, "keep_recaps", False) else "false"))
+           "true" if getattr(args, "keep_recaps", False) else "false",
+           json.dumps(getattr(args, "cast_method", "") or "passages"),
+           json.dumps(getattr(args, "cast_report", "") or ""),
+           json.dumps(getattr(args, "series_dir", "") or "")))
     return CONFIG
 
 
@@ -663,6 +667,16 @@ def main(argv=None) -> int:
     r.add_argument("--keep-recaps", action="store_true",
                    help="like --characters-only for books that have recaps; books "
                         "without them get recaps in full (implies --force)")
+    r.add_argument("--cast-method", choices=("passages", "book"), default="passages",
+                   help="book: write the who's who from the whole book (names from "
+                        "the text, one checked entry per person); with "
+                        "--characters-only the passages are not read again")
+    r.add_argument("--cast-report", default="",
+                   help="with --cast-method book, write <book>.cast.txt into this "
+                        "folder: what was found, set aside and written")
+    r.add_argument("--series-dir", default="",
+                   help="keep series memory files here instead of the usual place, "
+                        "so a trial run on copies leaves the real ones alone")
     r.add_argument("--keep-older-passages", action="store_true",
                    help="leave books that already have passage recaps in an older "
                         "layout alone instead of redoing them")

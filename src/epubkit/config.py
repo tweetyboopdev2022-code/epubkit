@@ -194,6 +194,16 @@ class RecapConfig:
     #: like cast_only for a book that has recaps; a book without them gets
     #: recaps and a who's who in full
     keep_recaps: bool = False
+    #: passages | book. How the who's who is written: from each passage's
+    #: answer as it goes (passages), or from the whole book at once - names
+    #: found in the text, one entry per person updated only when something
+    #: lasting changes, every entry checked against the book (book; see
+    #: epubkit/stages/cast.py). With cast_only, "book" does not read the
+    #: passages at all
+    cast_method: str = "passages"
+    #: with cast_method = "book", write what it did with each book, and every
+    #: entry, to <this folder>/<book>.cast.txt. Empty: no report
+    cast_report_dir: str = ""
 
 
 @dataclass

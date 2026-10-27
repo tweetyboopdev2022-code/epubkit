@@ -604,6 +604,31 @@ class RecapStage(Stage):
         story_too = bool(getattr(rc, "running_story", False))
         pov = words["pov"].format(hero=hero) if first_person else ""
         lead_parts = _prompt_parts(words, hero)
+        # The who's who from the whole book (stages/cast.py) rather than from
+        # each passage's answer. With the recap text kept, the passages are
+        # not read at all.
+        book_cast = rc.cast and getattr(rc, "cast_method", "passages") == "book"
+
+        def whole_book_cast():
+            from . import cast as book
+
+            def ask(prompt, system, usable):
+                return answers.ask(ctx.provider, prompt, system, usable=usable)
+            people, report = book.build(
+                ctx, docs, ask, hero=hero, first_person=first_person, lang=lang,
+                view=view, title=_book_title(ctx.path),
+                workers=max(1, ctx.config.ai.concurrency))
+            for line in report:
+                ctx.note("who's who: " + line)
+            _cast_report(rc, ctx.path, report, people)
+            return people
+
+        state = dict(passage_words=passage_words, kept_meta=kept_meta, cast_only=cast_only,
+                     hero=hero, lang=lang, first_person=first_person, memory=memory,
+                     series=series, index=index, words=words, answers=answers,
+                     book_cast=book_cast)
+        if book_cast and cast_only:
+            return self._write(ctx, kept, whole_book_cast(), **state)
 
         def remembered(name, known):
             """Who the reader knows this person to be before the passage."""
@@ -722,9 +747,19 @@ class RecapStage(Stage):
                  for it, s, _p in got if s]
         if cast_only:
             parts = kept
-        people = _people_rows(got, hero, ctx, lang, settled=True,
-                              series_name=view.name_of if view else None,
-                              series_lines=view.lines() if view else None) if rc.cast else []
+        if book_cast:
+            people = whole_book_cast()
+        elif rc.cast:
+            people = _people_rows(got, hero, ctx, lang, settled=True,
+                                  series_name=view.name_of if view else None,
+                                  series_lines=view.lines() if view else None)
+        else:
+            people = []
+        return self._write(ctx, parts, people, **state)
+
+    def _write(self, ctx, parts, people, *, passage_words, kept_meta, cast_only, hero,
+               lang, first_person, memory, series, index, words, answers, book_cast):
+        rc = ctx.config.recaps
         legacy = bool(getattr(rc, "legacy_files", False))
         chapters = _chapter_rows(parts)
         cast = _legacy_cast(people) if legacy else []
@@ -736,6 +771,8 @@ class RecapStage(Stage):
             meta.append(("ensemble", "1"))
         if cast_only:
             meta.append(("people_model", model))
+        if book_cast:
+            meta.append(("people_method", "book"))
         if first_person:
             meta.append(("first_person", "1"))
         if memory is not None:
@@ -746,7 +783,11 @@ class RecapStage(Stage):
 
         if memory is not None:
             try:
-                _remember(ctx, memory, index, hero, first_person, parts, people, words)
+                if book_cast:
+                    _remember_entries(ctx, memory, index, hero, first_person, parts, people,
+                                      words)
+                else:
+                    _remember(ctx, memory, index, hero, first_person, parts, people, words)
             except Exception as exc:                        # noqa: BLE001
                 ctx.note("series memory not updated: %s" % exc)
 
@@ -1014,6 +1055,50 @@ def _remember(ctx, memory, index, hero, first_person, parts, people, words) -> N
                        lead=hero, first_person=first_person, ensemble=not hero)
     memory.save()
     ctx.note("series memory updated: %s (%d people)" % (memory.path, len(final)))
+
+
+def _remember_entries(ctx, memory, index, hero, first_person, parts, people, words) -> None:
+    """Fold a book whose who's who was written from the whole book into its
+    series memory. Each entry is already one checked line about the person as
+    the book leaves them, so the last one is kept as it is - the main
+    character's too, so the next book starts from who they have become."""
+    ctx.report("updating the series memory")
+    last: dict[str, tuple[int, str, str]] = {}
+    for _o, _p, _para, who, status, n, text in people:
+        if text:
+            last[who] = (int(n), status, text)
+    keep = sorted((w for w, (n, st, _t) in last.items() if n >= 2 or st == "met"),
+                  key=lambda w: -last[w][0])[:80]
+    final = {}
+    for who in keep:
+        desc = _lasting(last[who][2], [last[who][2]])
+        if desc:
+            final[who] = desc
+    summaries = [s for *_x, s in parts if s]
+    story = _story(ctx.provider, summaries, hero or words["leads"], words)
+    memory.reload()
+    memory.record_book(index, _book_title(ctx.path), story, final,
+                       lead=hero, first_person=first_person, ensemble=not hero)
+    memory.save()
+    ctx.note("series memory updated: %s (%d people)" % (memory.path, len(final)))
+
+
+def _cast_report(rc, book: Path, report, people) -> None:
+    """With cast_report_dir set, what the whole-book who's who did with a
+    book, and every entry it wrote, as a text file to read over."""
+    folder = (getattr(rc, "cast_report_dir", "") or "").strip()
+    if not folder:
+        return
+    try:
+        out = Path(folder).expanduser()
+        out.mkdir(parents=True, exist_ok=True)
+        lines = [Path(book).name, ""] + list(report) + [""]
+        for order, _path, para, who, status, n, text in people:
+            lines.append("%d:%d\t%s\t%s\t%d\t%s" % (order, para, who, status, n, text))
+        (out / (Path(book).stem + ".cast.txt")).write_text("\n".join(lines) + "\n",
+                                                           encoding="utf-8")
+    except OSError:
+        pass
 
 
 _DEATH = re.compile(r"(?i)\b(?:deceased|dead|late|killed|décédée?|morte?|feue?)\b")
