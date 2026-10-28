@@ -910,8 +910,10 @@ def merge_names(groups: dict, used: dict, docs, keep_as=None, hero: str = "") ->
         if re.match(r"(?i)^(?:mr|mrs|ms|miss|aunt|uncle|madame?|monsieur|mme|mlle|"
                     r"tante|oncle)\b", k):
             continue
-        inside = [o for o in groups if o != k and o != k.strip()
-                  and re.search(r"(?<![\w'’])%s(?![\w'’])" % re.escape(o), k)
+        # any form counts: Donut's entry may be shown as "Princess Donut"
+        inside = [o for o in groups if o != k
+                  and any(f != k and re.search(r"(?<![\w'’])%s(?![\w'’])" % re.escape(f), k)
+                          for f in groups[o])
                   and uses.get(o, 0) >= 10 * max(1, uses.get(k, 0))]
         if inside:
             inside.sort(key=lambda o: (-len(o.split()), -uses.get(o, 0)))

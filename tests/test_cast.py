@@ -348,3 +348,11 @@ def test_a_title_around_a_name_is_that_person():
             "NW Princess Donut the Queen": 1, "Mrs. Weasley": 2, "Weasley": 60}
     got = C.merge_names(groups, used, [], hero="Carl")
     assert set(got) == {"Donut", "Mrs. Weasley", "Weasley"}
+
+
+def test_a_title_around_a_short_form_joins_the_full_name():
+    groups = {"Princess Donut": ["Princess Donut", "Donut"], "Even Donut": ["Even Donut"],
+              "Goddamnit Donut": ["Goddamnit Donut"]}
+    used = {"Princess Donut": 80, "Donut": 800, "Even Donut": 1, "Goddamnit Donut": 2}
+    got = C.merge_names(groups, used, [], hero="Carl")
+    assert set(got) == {"Princess Donut"}
