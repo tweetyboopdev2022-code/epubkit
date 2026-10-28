@@ -258,3 +258,71 @@ def test_a_report_lists_what_was_set_aside(tmp_path):
         **{"recaps.cast_report_dir": str(tmp_path / "rep")})
     text = next((tmp_path / "rep").glob("*.cast.txt")).read_text()
     assert "Syndicate" in text.split("not people:", 1)[1].splitlines()[0]
+
+
+# -- second round, after the DCC 5 pilot ------------------------------------------
+
+def test_names_that_are_one_person_are_folded_together():
+    groups = {n: [n] for n in ["Princess", "Princess Donut", "Princess D’nadia", "Miriam",
+                               "Miriam Dom", "Li-Na", "Li Na", "Li Jun", "Sledge", "Sledgie",
+                               "Very Sullen", "Bea", "Beatrice", "Carl", "Carla"]}
+    used = {n: 5 for n in groups}
+    used.update({"Princess Donut": 1200, "Princess D’nadia": 24, "Sledge": 20})
+    docs = [(1, "a", "", [(0, "Sledge, also known as Very Sullen, waved.")])]
+    got = C.merge_names(groups, used, docs, hero="Carl")
+    assert set(got["Princess Donut"]) == {"Princess", "Princess Donut"}
+    assert "Miriam" in got["Miriam Dom"]
+    assert len([k for k in got if C._squash(k) == "lina"]) == 1
+    assert "Li Jun" in got                       # Li is not folded into either
+    assert {"Sledgie", "Very Sullen"} <= set(got["Sledge"])
+    assert "Bea" in got.get("Beatrice", []) or "Beatrice" in got.get("Bea", [])
+    assert "Carl" in got and "Carla" in got      # never the lead
+
+
+def test_the_entry_does_not_repeat_the_name():
+    assert C._unnamed("Orren is a Valtay worm.", ["Orren"]) == "A Valtay worm."
+    assert C._unnamed("She is a vampire.", ["Miriam"]) == "A vampire."
+    assert C._unnamed("A cat who is Carl's partner.", ["Donut"]) == "A cat who is Carl's partner."
+
+
+def test_a_scene_is_not_who_someone_is():
+    words = C.WORDS["en"]
+    src = "Carl sat in the vice principal's office with Donut. A former Coast Guard tech."
+    bad = C.problems("A former Coast Guard tech who is currently in the vice principal's office.",
+                     "sat in the vice principal's office", src, ["Carl"], {}, words)
+    assert words["problems"]["scene"] in bad
+
+
+def test_a_name_the_model_says_is_not_a_person_is_dropped(tmp_path):
+    book = dungeon(tmp_path, [CH1, CH2])
+
+    class Kinds(Model):
+        def answer(self, prompt):
+            if re.search(r"(?m)^Person: Mongo", prompt):
+                return "KIND: not a person (a show)\nQUOTE: -\nSTATUS: heard\nENTRY: -"
+            return super().answer(prompt)
+    kinds = dict(KINDS, Mongo=("person", "yes"))
+    ch = [CH1 + ["Mongo ran. Mongo roared. Mongo slept. Mongo ate."], CH2]
+    book = dungeon(tmp_path, ch)
+    run(tmp_path, book, Kinds(kinds), **BOOK)
+    assert "Mongo" not in {r[3] for r in people_of(book)}
+
+
+def test_someone_heard_speaking_has_been_met_from_there(tmp_path):
+    book = dungeon(tmp_path, [CH1, CH2])
+
+    class Heard(Model):
+        def answer(self, prompt):
+            return super().answer(prompt).replace("STATUS: met", "STATUS: heard")
+    run(tmp_path, book, Heard(KINDS), **BOOK)
+    mor = [r for r in people_of(book) if r[3] == "Mordecai"]
+    # “You are late,” Mordecai said: the second paragraph of chapter 1
+    assert any(r[4] == "met" and int(r[0]) == int(mor[0][0]) for r in mor)
+    assert mor[0][4] == "heard"
+
+
+def test_pronouns_do_not_make_a_name():
+    docs = [(1, "a", "", [(0, "Since I left, nobody came. Since I came back, Wren left. "
+                              "They said All I wanted. Wren nodded.")])]
+    names = C.find_names(docs)
+    assert "Since I" not in names and "All I" not in names
