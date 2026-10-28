@@ -401,3 +401,18 @@ def test_a_tie_the_book_never_states_is_caught():
     assert C.unbacked_relations("She is the mother of Donut.", source) == [("Donut", "mother")]
     assert C.unbacked_relations("A hive queen and Vrah's mother.", source) == []
     assert C.unbacked_relations("A hive queen who owns a park.", source) == []
+
+
+def test_a_last_look_covers_everything_since_the_entry_last_changed(tmp_path):
+    chapters = [CH1, CH2] + [["Mordecai said little in chapter %d. %s" % (i, FILLER)] * 3
+                             for i in range(3, 9)]
+    book = dungeon(tmp_path, chapters)
+    seen = []
+    def later(prompt):
+        seen.append(prompt)
+        return "SAME"
+    model = Model(KINDS, {"Mordecai": ["A game guide who waits in the guild hall.", later]})
+    run(tmp_path, book, model, **BOOK)
+    final = seen[-1].split("since, in order", 1)[1]
+    # the last question sees the early and the late chapters together
+    assert "chapter 3" in final and "chapter 8" in final

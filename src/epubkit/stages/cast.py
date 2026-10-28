@@ -869,6 +869,21 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 p.rows.append((m_order, m_path, m_para, p.status, p.entry))
             if not regular and p.entry:
                 break               # a minor figure gets one entry, maybe a second
+        # one last look over everything since the entry last changed: in DCC 5
+        # Odette's stopped at chapter 57 and Diwata's at 76, each checkpoint
+        # having seen too little to call it a change
+        if regular and p.entry and p.rows and marks and not p.not_person:
+            last = _pos(p.rows[-1][0], p.rows[-1][2])
+            late = [x for x in p.mentions if _pos(x[0], x[2]) > last]
+            if len(late) >= UPDATE_AFTER * 3:
+                status, entry = one_question(p, words["update"],
+                                             [x[3] for x in _spread(late, EXTRACTS)], p.entry)
+                if entry:
+                    m_order, m_path, m_para = marks[-1]
+                    p.entry = entry
+                    if status == "met":
+                        p.status = "met"
+                    p.rows.append((m_order, m_path, m_para, p.status, entry))
         with lock:
             done[0] += 1
             ctx.report("who's who: %d/%d people" % (done[0], len(people)))
