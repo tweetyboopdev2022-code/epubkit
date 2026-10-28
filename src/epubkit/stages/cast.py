@@ -268,6 +268,7 @@ the a an and but or so then now there here this that these those what who why ho
 where when which while if as at in on of to by for from with without into onto upon
 he she it we they you me him her us them my your his its our their mine yours
 mr mrs ms dr sir madam miss lord lady chapter part book prologue epilogue interlude
+professor uncle aunt mum mom mommy mummy dad daddy mama papa grandma grandpa granny
 monday tuesday wednesday thursday friday saturday sunday january february march april
 may june july august september october november december
 god christ jesus heaven hell okay alright please thanks thank sorry wait look
@@ -280,7 +281,7 @@ mon ma mes ton ta tes son sa ses notre votre leur leurs ce cette ces qui que quo
 oui non bon bien ah oh eh chapitre partie livre monsieur madame mademoiselle
 """.split())
 _TITLES = {"mr", "mrs", "ms", "dr", "sir", "lady", "lord", "miss", "madam", "monsieur",
-           "madame", "mademoiselle"}
+           "madame", "mademoiselle", "professor", "uncle", "aunt"}
 _PRONOUNS = {"i", "i'm", "i’m", "i'd", "i’d", "i'll", "i’ll", "i've", "i’ve", "me", "my"}
 _ENDS = re.compile(r"(?:['’]s|['’])$")
 _START = re.compile(r"(?:^|[.!?…:;—–\"“”«»(\[]|\s-)\s*$")
@@ -1005,18 +1006,42 @@ def merge_names(groups: dict, used: dict, docs, keep_as=None, hero: str = "") ->
             a, b = k, hits[0]
             big, small = (a, b) if uses.get(a, 0) >= uses.get(b, 0) else (b, a)
             into(small, big)
-    # "Miss Beatrice" is Bea when Beatrice is a first name; "Mrs. Weasley"
-    # is nobody's when Weasley ends several names
-    hon = re.compile(r"^(?:Mr|Mrs|Ms|Miss|Mme|Mlle|Madame|Monsieur)\.?\s+(\S+)$")
+    # a title and a name: "Miss Beatrice" is Bea when Beatrice is a first
+    # name, "Professor Snape" is Severus Snape when he is the only Snape,
+    # "Mr. Ronald Weasley" is Ron. "Mrs. Weasley" is nobody's when Weasley
+    # ends several names.
+    hon = re.compile(r"^(?:Mr|Mrs|Ms|Miss|Mme|Mlle|Madame?|Monsieur|Professor|Prof|Dr|"
+                     r"Sir|Uncle|Aunt|Tante|Oncle)\.?\s+(.+)$")
     ends = Counter(n.split()[-1] for n in used if len(n.split()) > 1 and not hon.match(n))
+
+    def full_ending(word):
+        return {o for o in groups for f in groups[o] + [o]
+                if len(f.split()) > 1 and f.split()[-1] == word and not hon.match(f)}
+
     for k in list(groups):
         m = hon.match(k)
-        if k not in groups or not m or ends[m.group(1)] >= 2:
+        if k not in groups or not m:
             continue
-        # a bare "Weasley" entry is a family, not a first name
-        owner = [o for o in groups if o != k and o != m.group(1) and m.group(1) in groups[o]]
-        if len(owner) == 1:
+        rest = m.group(1)
+        if len(rest.split()) > 1:
+            owner = [o for o in groups if o != k and rest in groups[o] + [o]]
+        elif ends[rest] >= 2:
+            continue
+        else:
+            # a bare "Weasley" entry is a family, not a first name
+            owner = [o for o in groups if o != k and o != rest and rest in groups[o]] or \
+                sorted(full_ending(rest) - {k})
+        if len(set(owner)) == 1:
             into(k, owner[0])
+    # a family name alone: "Longbottom" is Neville when he is the only one;
+    # "Potter" is Harry when the book means him far more than the others
+    for k in [k for k in groups if len(k.split()) == 1]:
+        if k not in groups or k == hero:
+            continue
+        owners = sorted(full_ending(k) - {k}, key=lambda o: -uses.get(o, 0))
+        if len(owners) == 1 or (len(owners) > 1 and
+                                uses.get(owners[0], 0) >= 5 * uses.get(owners[1], 0)):
+            into(k, owners[0])
     # a rare longer form around a common name is that person under a title or
     # a stray word: "Even Donut", "Dungeon Princess Donut", "NW Princess
     # Donut the Queen". Never a family form: "Mrs. Weasley" is not Ron.

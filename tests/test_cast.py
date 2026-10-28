@@ -416,3 +416,27 @@ def test_a_last_look_covers_everything_since_the_entry_last_changed(tmp_path):
     final = seen[-1].split("since, in order", 1)[1]
     # the last question sees the early and the late chapters together
     assert "chapter 3" in final and "chapter 8" in final
+
+
+def test_titles_and_family_names_join_the_one_person_they_mean():
+    groups = {"Harry": ["Harry", "Harry Potter"], "Lily Potter": ["Lily Potter"],
+              "Potter": ["Potter"], "Severus": ["Severus", "Severus Snape"],
+              "Professor Snape": ["Professor Snape"], "Neville": ["Neville", "Neville Longbottom"],
+              "Longbottom": ["Longbottom"], "Ron": ["Ron", "Ron Weasley", "Ronald Weasley"],
+              "Mr. Ronald Weasley": ["Mr. Ronald Weasley"], "Fred Weasley": ["Fred Weasley"],
+              "Mrs. Weasley": ["Mrs. Weasley"]}
+    used = {"Harry": 2000, "Harry Potter": 100, "Lily Potter": 5, "Potter": 80,
+            "Severus": 20, "Severus Snape": 10, "Professor Snape": 40, "Neville": 200,
+            "Neville Longbottom": 10, "Longbottom": 12, "Ron": 900, "Ron Weasley": 30,
+            "Ronald Weasley": 3, "Mr. Ronald Weasley": 1, "Fred Weasley": 20, "Mrs. Weasley": 60}
+    got = C.merge_names(groups, used, [], hero="Harry")
+    assert "Professor Snape" in got["Severus"] and "Longbottom" in got["Neville"]
+    assert "Mr. Ronald Weasley" in got["Ron"] and "Potter" in got["Harry"]
+    assert "Mrs. Weasley" in got
+
+
+def test_mum_and_a_bare_title_are_not_names():
+    docs = [(1, "a", "", [(0, "Ron said Mum would be cross. Then Mum wrote. The Professor "
+                              "nodded; Professor Snape and the Professor left with Ron.")])]
+    names = C.find_names(docs)
+    assert "Mum" not in names and "Professor" not in names and "Professor Snape" in names
