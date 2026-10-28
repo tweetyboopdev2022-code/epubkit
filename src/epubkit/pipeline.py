@@ -81,11 +81,15 @@ def find_books(root: Path, exclude=()) -> list[Path]:
 
 
 class Pipeline:
-    def __init__(self, config: Config, log, provider=None, progress=None):
+    def __init__(self, config: Config, log, provider=None, progress=None, control=None):
+        from .workshop import Control, Gated
         self.config = config
         self.log = log
-        self.provider = provider
         self.progress = progress or Progress()        # disabled unless given a live one
+        # the Grimmory Workshop's pause, stop and skip; without a control
+        # file every check passes at once
+        self.control = control or Control()
+        self.provider = Gated(provider, self.control) if (provider and control) else provider
         names = list(config.run.stages)
         # A config written before splitting existed lists no "split" stage.
         # The decision "one book or several?" belongs ahead of everything that
@@ -216,7 +220,8 @@ class Pipeline:
             work.mkdir(parents=True, exist_ok=True)
             ctx = Context(config=cfg, record=rec, path=source, work=work,
                           log=self.log, provider=self.provider,
-                          step=lambda text: self.progress.detail(key, text))
+                          step=lambda text: self.progress.detail(key, text),
+                          said=self._said(key))
             outcome = self._stages(ctx, source.name, key, 0)
             if outcome == "done":
                 self._finish(ctx, rec)
@@ -244,11 +249,24 @@ class Pipeline:
         for i, stage in enumerate(self.stages, 1):
             if i <= start:
                 continue
+            self.control.step = ""
+            self.control.check()
             self.progress.stage(key, stage.name, i, len(self.stages))
-            if not stage.applies(ctx):
+            if not stage.applies(ctx) or self.control.skips(stage.name):
                 rec.mark(stage.name, "skipped")
+                self._step_result(key, stage.name, "skipped")
                 continue
-            result = stage.run(ctx)
+            from .workshop import StepSkipped
+            self.control.step = stage.name
+            try:
+                result = stage.run(ctx)
+            except StepSkipped:
+                rec.mark(stage.name, "skipped")
+                rec.notes.append("%s skipped from the Workshop" % stage.name)
+                self._step_result(key, stage.name, "skipped", "skipped from the Workshop")
+                continue
+            finally:
+                self.control.step = ""
             rec.mark(stage.name, "ok" if result.ok else "failed")
             if result.path:
                 ctx.path = result.path
@@ -266,6 +284,14 @@ class Pipeline:
                 rec.message = result.message
                 return "skipped"
         return "done"
+
+    def _said(self, key):
+        feed = getattr(self.progress, "feed", None)
+        return (lambda text: feed(text, key)) if feed else None
+
+    def _step_result(self, key, stage, state, note=""):
+        if hasattr(self.progress, "step_result"):
+            self.progress.step_result(key, stage, state, note)
 
     def _finish(self, ctx: Context, rec) -> None:
         final = self.config.paths.output / ctx.path.name
@@ -295,7 +321,8 @@ class Pipeline:
                 pctx = Context(config=self.config, record=prec, path=part,
                                work=ctx.work / ("part%02d" % n), log=self.log,
                                provider=self.provider,
-                               step=lambda text, k=key: self.progress.detail(k, text))
+                               step=lambda text, k=key: self.progress.detail(k, text),
+                               said=self._said(key))
                 pctx.work.mkdir(parents=True, exist_ok=True)
                 if self._stages(pctx, part.name, key, after) == "done":
                     self._finish(pctx, prec)

@@ -25,6 +25,8 @@ class Context:
     meta: dict[str, Any] = field(default_factory=dict)
     #: set by the pipeline so a long stage can say where it has got to
     step: Any = None
+    #: set by the Workshop: a feed of what was just written, shown live
+    said: Any = None
 
     def report(self, text: str) -> None:
         """Tell the live display what this stage is doing, e.g. 'chapter 4/22'."""
@@ -34,6 +36,12 @@ class Context:
     def note(self, text: str) -> None:
         self.record.notes.append(text)
         self.log.debug("  %s", text)
+        self.tell(text)
+
+    def tell(self, text: str) -> None:
+        """Show a line in the Workshop's live feed; nothing anywhere else."""
+        if self.said:
+            self.said(text)
 
 
 @dataclass

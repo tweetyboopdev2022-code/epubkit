@@ -863,6 +863,7 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
             p.rows.append((f_order, f_path, f_para, p.status, entry))
             with lock:
                 current[p.name] = entry
+            ctx.tell("%s: %s" % (p.name, entry))
         # main and supporting people are looked at again as the book goes on
         regular = p.matters or len(p.mentions) >= 8 or lead
         for m_order, m_path, m_para in marks:
@@ -894,6 +895,7 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 p.entry = entry
                 with lock:
                     current[p.name] = entry
+                ctx.tell("%s, updated: %s" % (p.name, entry))
             # the lead is filed again at every checkpoint, so their count
             # (and their place at the top of the list) keeps up
             if entry or (p.entry and (lead or (p.status == "met" and not was_met))):

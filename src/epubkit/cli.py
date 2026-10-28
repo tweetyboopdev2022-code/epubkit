@@ -128,6 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
                            help="write a book that improved but is not clean")
             s.add_argument("-n", "--dry-run", action="store_true")
             s.add_argument("-v", "--verbose", action="store_true")
+            _workshop_args(s)
 
     r = sub.add_parser("recaps", help="add recaps to books or folders of books, in place")
     r.add_argument("books", type=Path, nargs="+", metavar="BOOK_OR_FOLDER")
@@ -141,6 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--provider", choices=("ollama", "anthropic", "openai"))
     r.add_argument("--model")
     r.add_argument("--endpoint")
+    _workshop_args(r)
 
     sp = sub.add_parser("split", help="split an omnibus into one file per book")
     sp.add_argument("book", type=Path)
@@ -318,10 +320,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "recaps":
         return _cmd_recaps(args, cfg, log)
 
-    return _cmd_run(cfg, log, plain=getattr(args, "plain", False))
+    return _cmd_run(cfg, log, plain=getattr(args, "plain", False),
+                    status=getattr(args, "status", None), control=getattr(args, "control", None))
 
 
-def _cmd_run(cfg: Config, log, plain: bool = False) -> int:
+def _workshop_args(p) -> None:
+    p.add_argument("--status", type=Path, metavar="FILE",
+                   help="keep FILE up to date with where the run has got to, as JSON "
+                        "(for the Grimmory Workshop)")
+    p.add_argument("--control", type=Path, metavar="FILE",
+                   help="read pause / stop / skip from FILE before each step and model call")
+
+
+STOPPED = 3                         # exit code: stopped from the Workshop
+
+
+def _cmd_run(cfg: Config, log, plain: bool = False, status=None, control=None) -> int:
     problems = cfg.check()
     if problems:
         print("cannot start:", file=sys.stderr)
@@ -342,10 +356,18 @@ def _cmd_run(cfg: Config, log, plain: bool = False) -> int:
 
     from .pipeline import Pipeline
     from .progress import Progress
-    progress = Progress.for_stream(sys.stderr, plain=plain or cfg.run.dry_run)
+    from .workshop import Control, Status, Stopped
+    if status:
+        progress = Status(status)
+    else:
+        progress = Progress.for_stream(sys.stderr, plain=plain or cfg.run.dry_run)
+    gate = Control(control, progress if status else None) if control else None
     undo = progress.attach(log)
     try:
-        state = Pipeline(cfg, log, provider, progress).run()
+        state = Pipeline(cfg, log, provider, progress, control=gate).run()
+    except Stopped:
+        log.info("stopped from the Workshop; what was done so far is kept")
+        return STOPPED
     finally:
         undo()
 
@@ -395,6 +417,13 @@ def _recap_progress(name: str):
     return step
 
 
+def _both(*steps):
+    def step(text: str) -> None:
+        for s in steps:
+            s(text)
+    return step
+
+
 def _recap_books(paths) -> list[Path]:
     out = []
     for p in paths:
@@ -432,8 +461,12 @@ def _cmd_recaps(args, cfg: Config, log) -> int:
     from .ai import build
     from .stages.base import Context
     from .state import BookRecord
-
+    from .workshop import Control, Gated, Status, StepSkipped, Stopped
+    status = Status(args.status) if getattr(args, "status", None) else None
+    gate = Control(args.control, status) if getattr(args, "control", None) else None
     provider = build(cfg.ai)
+    if gate:
+        provider = Gated(provider, gate)
     todo = []
     for b in books:
         a = R.audit(b)
@@ -455,14 +488,36 @@ def _cmd_recaps(args, cfg: Config, log) -> int:
         work = Path(tempfile.mkdtemp(prefix="epubkit-recaps-"))
         rec = BookRecord(source=str(book))
         label = "[%d/%d] %s" % (i, len(todo), book.name) if len(todo) > 1 else book.name
+        step = _recap_progress(label)
+        key = str(book)
+        if status:
+            status.book_start(key, book.name)
+            status.stage(key, "recaps", 1, 1)
+            step = _both(step, lambda text, k=key: status.detail(k, text))
         ctx = Context(config=cfg, record=rec, path=book, work=work, log=log,
-                      provider=provider, step=_recap_progress(label))
+                      provider=provider, step=step,
+                      said=(lambda text, k=key: status.feed(text, k)) if status else None)
+        if gate:
+            gate.step = "recaps"
         try:
+            if gate and gate.skips("recaps"):
+                raise StepSkipped("recaps")
             result = R.RecapStage().run(ctx)
             ok = result.ok
+        except StepSkipped:
+            ok = True
+            rec.notes.append("recaps skipped from the Workshop; the book is left as it was")
+            if status:
+                status.step_result(key, "recaps", "skipped", "skipped from the Workshop")
+        except Stopped:
+            shutil.rmtree(work, ignore_errors=True)
+            log.info("stopped from the Workshop; answers so far are kept for the next run")
+            return STOPPED
         except Exception as exc:                            # noqa: BLE001
             ok = False
             rec.notes.append("not written: %s" % exc)
+        if status:
+            status.book_end(key, failed=not ok)
         if sys.stderr.isatty():
             sys.stderr.write("\n")
         for n in rec.notes:
@@ -470,6 +525,8 @@ def _cmd_recaps(args, cfg: Config, log) -> int:
         if not ok:
             failed += 1
         shutil.rmtree(work, ignore_errors=True)
+    if status:
+        status.end()
     return 1 if failed else 0
 
 
