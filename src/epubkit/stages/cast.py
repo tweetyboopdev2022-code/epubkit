@@ -659,6 +659,7 @@ class Person:
         self.remembered = False
         self.spoke = None               # (order, path, para) first heard speaking
         self.alias_of = ""              # the entry said this is someone else
+        self.why = ""                   # why the last answer failed its checks
 
 
 def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
@@ -814,6 +815,7 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                     return status, ""
                 return status, entry
         p.failed += 1
+        p.why = "; ".join(reason)[:120]
         ctx.log.debug("    who's who: %s left out: %s", p.name, "; ".join(reason))
         return "", None
 
@@ -910,9 +912,10 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                   "%d questions, %d answers fixed on a second try" % (
                       len(shown), sum(1 for p in people if not p.rows),
                       sum(p.asked for p in people), sum(p.retried for p in people)))
-    lost = [p.name for p in people if not p.rows]
+    lost = [p for p in people if not p.rows]
     if lost:
-        report.append("left out: " + ", ".join(lost[:40]))
+        report.append("left out: " + ", ".join(p.name for p in lost[:40]))
+        report.extend("  %s: %s" % (p.name, p.why) for p in lost[:40] if p.why)
     return rows, report
 
 
@@ -960,8 +963,14 @@ def merge_names(groups: dict, used: dict, docs, keep_as=None, hero: str = "") ->
     def into(small, big):
         if small == big or small not in groups or big not in groups:
             return
-        if keep_as and keep_as(small) and keep_as(small) != keep_as(big):
-            return
+        # two names the earlier books keep apart stay apart; a name they know
+        # and one they don't ("Seamus" and "Seamus Finnigan") may still join
+        if keep_as:
+            a, b = keep_as(small), keep_as(big)
+            if a and b and a != b:
+                return
+            if a and not b:
+                small, big = big, small     # keep the name the series knows
         groups[big].extend(groups.pop(small))
         uses[big] = uses.get(big, 0) + uses.pop(small, 0)
 
@@ -1059,6 +1068,25 @@ def merge_names(groups: dict, used: dict, docs, keep_as=None, hero: str = "") ->
         if inside:
             inside.sort(key=lambda o: (-len(o.split()), -uses.get(o, 0)))
             into(k, inside[0])
+    # a full name ties a first name to a family name: "Minerva McGonagall"
+    # makes "Minerva" and "Professor McGonagall" one person, unless several
+    # people share the family name
+    def holding(form):
+        return {o for o in groups if form == o or form in groups[o]}
+
+    for n in sorted(used, key=lambda n: -used[n]):
+        words_ = n.split()
+        if len(words_) != 2 or hon.match(n) or ends[words_[1]] >= 2:
+            continue
+        first, last = words_
+        a = holding(first) | holding(n)
+        b = holding(last) | {o for o in groups for f in groups[o] + [o]
+                             if (m := hon.match(f)) and m.group(1) == last}
+        if len(a) == 1 and len(b) == 1 and a != b:
+            x, y = a.pop(), b.pop()
+            if x != hero and y != hero:
+                big, small = (x, y) if uses.get(x, 0) >= uses.get(y, 0) else (y, x)
+                into(small, big)
     # "Sledge, also known as Very Sullen"
     alts = {f: k for k, fs in groups.items() for f in fs}
     if len(alts) > 1:

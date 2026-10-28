@@ -440,3 +440,23 @@ def test_mum_and_a_bare_title_are_not_names():
                               "nodded; Professor Snape and the Professor left with Ron.")])]
     names = C.find_names(docs)
     assert "Mum" not in names and "Professor" not in names and "Professor Snape" in names
+
+
+def test_a_full_name_ties_a_first_name_to_a_family_name():
+    groups = {"Minerva": ["Minerva"], "Professor McGonagall": ["Professor McGonagall"],
+              "Remus": ["Remus"], "Lupin": ["Lupin", "Professor Lupin"],
+              "Molly": ["Molly"], "Mrs. Weasley": ["Mrs. Weasley"], "Ron": ["Ron", "Ron Weasley"]}
+    used = {"Minerva": 4, "Professor McGonagall": 80, "Minerva McGonagall": 2, "Remus": 10,
+            "Lupin": 200, "Professor Lupin": 40, "Remus Lupin": 3, "Molly": 5,
+            "Mrs. Weasley": 60, "Molly Weasley": 1, "Ron": 900, "Ron Weasley": 30}
+    got = C.merge_names(groups, used, [], hero="Harry")
+    assert "Minerva" in got["Professor McGonagall"] and "Remus" in got["Lupin"]
+    # Weasley is several people's name: Molly is not joined by it
+    assert "Molly" in got and "Mrs. Weasley" in got
+
+
+def test_a_name_the_earlier_books_know_can_join_one_they_do_not():
+    groups = {"Seamus": ["Seamus"], "Seamus Finnigan": ["Seamus Finnigan"]}
+    used = {"Seamus": 40, "Seamus Finnigan": 3}
+    got = C.merge_names(groups, used, [], keep_as=lambda n: n if n == "Seamus" else "")
+    assert list(got) == ["Seamus"] and "Seamus Finnigan" in got["Seamus"]
