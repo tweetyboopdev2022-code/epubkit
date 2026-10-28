@@ -393,3 +393,11 @@ def test_one_row_per_person_per_place():
     p.rows = [(17, "a", 90, "heard", "A crawler."), (17, "a", 90, "met", "A crawler.")]
     got = C._rows([p], "Carl")
     assert len(got) == 1 and got[0][4] == "met"
+
+
+def test_a_tie_the_book_never_states_is_caught():
+    source = ("1. Circe Took rose from her chair. Vrah, her daughter, waited.\n"
+              "2. Donut glared at Circe across the table.")
+    assert C.unbacked_relations("She is the mother of Donut.", source) == [("Donut", "mother")]
+    assert C.unbacked_relations("A hive queen and Vrah's mother.", source) == []
+    assert C.unbacked_relations("A hive queen who owns a park.", source) == []

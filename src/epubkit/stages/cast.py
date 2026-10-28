@@ -94,7 +94,7 @@ Their entry so far:
 What the book has said about them since, in order:
 {extracts}
 
-Has anything lasting changed about who {name} is: a new role, a new relationship, something revealed, a change in what they are? A single scene is not a change.
+Has anything lasting changed about who {name} is: a new role, class or title, a new relationship, something revealed, a change in what they are, joining or leaving a group, or their death? A single scene is not a change; a death always is.
 
 Answer in exactly three lines:
 QUOTE: <copy a few words, exactly, from the extract that shows the change, or - if nothing changed>
@@ -166,7 +166,7 @@ Sa fiche jusqu'ici :
 Ce que le livre a dit de ce personnage depuis, dans l'ordre :
 {extracts}
 
-Quelque chose de durable a-t-il changé : un nouveau rôle, un nouveau lien, une révélation, un changement de nature ? Une seule scène n'est pas un changement.
+Quelque chose de durable a-t-il changé : un nouveau rôle, une nouvelle classe ou un nouveau titre, un nouveau lien, une révélation, un changement de nature, un départ ou une arrivée dans un groupe, ou sa mort ? Une seule scène n'est pas un changement ; une mort l'est toujours.
 
 Répondez en exactement trois lignes :
 QUOTE: <recopiez exactement quelques mots de l'extrait qui montre le changement, ou ->
@@ -205,6 +205,8 @@ WORDS = {
             "short": "the ENTRY is too short to say who they are",
             "theirs": "the ENTRY is the one written for {who}",
             "guess": "most of the ENTRY is not in the extracts",
+            "relation": "the extracts never say {who} is anyone's {rel} near this person: "
+                        "a relationship must be one the extracts state about {name}",
             "scene": "the ENTRY says where they are or what they are doing now; say who they are",
         },
     },
@@ -228,6 +230,8 @@ WORDS = {
             "short": "l'ENTRY est trop courte pour dire qui c'est",
             "theirs": "l'ENTRY est celle écrite pour {who}",
             "guess": "l'essentiel de l'ENTRY n'est pas dans les extraits",
+            "relation": "les extraits ne disent jamais que {who} a ce lien ({rel}) ici : "
+                        "un lien doit être dit par les extraits à propos de {name}",
             "scene": "l'ENTRY dit où il est ou ce qu'il fait maintenant ; dites qui c'est",
         },
     },
@@ -532,6 +536,43 @@ def problems(entry: str, quote: str, source: str, name_forms, others: dict,
     return out
 
 
+# family and ties: DCC 5 had Circe as "the mother of Donut" (she is Vrah's)
+# and Li Na as "the sister of Zhang" (she is Li Jun's)
+_RELATIONS = (r"mother|father|sister|brother|son|daughter|twin|wife|husband|"
+              r"girlfriend|boyfriend|partner|cousin|aunt|uncle|niece|nephew|"
+              r"grand(?:mother|father|son|daughter)|half-sister|half-brother|"
+              r"mère|père|sœur|soeur|frère|fils|fille|jumelle?|femme|mari|cousine?|"
+              r"tante|oncle")
+_PARENT = ["mother", "father", "daughter", "son", "parent", "child", "mère", "père",
+           "fille", "fils"]
+_SIBLING = ["sister", "brother", "sibling", "twin", "sœur", "soeur", "frère", "jumel"]
+_TIES = {**{w: _PARENT for w in _PARENT}, **{w: _SIBLING for w in _SIBLING},
+         "half-sister": _SIBLING, "half-brother": _SIBLING,
+         **{w: ["wife", "husband", "married", "femme", "mari"] for w in
+            ("wife", "husband", "femme", "mari")},
+         **{w: ["aunt", "uncle", "niece", "nephew", "tante", "oncle"] for w in
+            ("aunt", "uncle", "niece", "nephew", "tante", "oncle")}}
+_NAMEW = r"[A-ZÀ-ÖØ-Þ][\w'’\-]+(?:\s+[A-ZÀ-ÖØ-Þ][\w'’\-]+)?"
+_REL_OF = re.compile(r"\b(%s)s?\s+(?:of|to|de|du|d['’])\s*(%s)" % (_RELATIONS, _NAMEW))
+_REL_POSS = re.compile(r"(%s)['’]s\s+(?:\w+\s+)?(%s)\b" % (_NAMEW, _RELATIONS))
+
+
+def unbacked_relations(entry: str, source: str) -> list[tuple[str, str]]:
+    """[(who, relation)] the entry claims that no line of the source puts
+    side by side: "mother of Donut" needs "mother" near "Donut" somewhere."""
+    claims = [(m.group(2), m.group(1)) for m in _REL_OF.finditer(entry)] + \
+             [(m.group(1), m.group(2)) for m in _REL_POSS.finditer(entry)]
+    out = []
+    for who, rel in claims:
+        # "Vrah, her daughter" backs "Vrah's mother"
+        stems = "|".join(re.escape(w) for w in _TIES.get(rel.lower(), [rel.lower()[:6]]))
+        near = re.compile(r"(?is)%s.{0,60}(?:%s)|(?:%s).{0,60}%s" % (
+            re.escape(who), stems, stems, re.escape(who)))
+        if not any(near.search(line) for line in source.splitlines()):
+            out.append((who, rel))
+    return out
+
+
 def _same(entry: str) -> bool:
     return bool(re.match(r"(?i)\W*(?:same|m[êe]me)\b", entry))
 
@@ -753,6 +794,18 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
             with lock:
                 others = {w: e for w, e in current.items() if w != p.name}
             reason = problems(entry, quote, source, p.forms, others, words, same_ok=update)
+            if not (update and _same(entry)):
+                for who, rel in unbacked_relations(entry, source):
+                    reason.append(words["problems"]["relation"].format(
+                        who=who, rel=rel, name=p.name))
+                if attempt and reason and all(
+                        r.startswith(words["problems"]["relation"][:20]) for r in reason):
+                    # a good entry with one bad tie: keep it without that sentence
+                    bad = [w for w, _r in unbacked_relations(entry, source)]
+                    kept = " ".join(x for x in _SENTENCE.split(entry)
+                                    if not any(w in x for w in bad))
+                    if len(kept.split()) >= 4:
+                        entry, reason = kept, []
             if not reason:
                 if attempt:
                     p.retried += 1
