@@ -663,9 +663,13 @@ class Person:
 
 
 def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
-          lang: str = "en", view=None, title: str = "", workers: int = 1):
+          lang: str = "en", view=None, title: str = "", workers: int = 1, names_list=None):
     """-> (people rows, report lines). Rows are
-    (order, path, para, name, met|heard, times named so far, entry)."""
+    (order, path, para, name, met|heard, times named so far, entry).
+
+    names_list: the series' names list (series_memory.Names), which says
+    which names are one person and which are not people. Names it settles
+    are not put to the model at all."""
     words = WORDS.get(lang, WORDS["en"])
     report: list[str] = []
     ctx.report("who's who: finding names")
@@ -675,11 +679,23 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
         for n in list(names):
             if view.name_of(n, True):
                 remembered.add(n)
+    listed = {}                     # name -> True (a person) / False, from the list
+    if names_list:
+        for n in names:
+            said = names_list.is_person(n)
+            if said is not None:
+                listed[n] = said
     # a name used once is a passing mention, unless the earlier books know it
     asked_about = {n: e for n, e in names.items()
                    if e["n"] >= 2 or n in remembered or (hero and n == hero)}
     ctx.report("who's who: sorting %d names" % len(asked_about))
-    kinds = sort_names(ask, asked_about, title, words)
+    kinds = sort_names(ask, {n: e for n, e in asked_about.items() if n not in listed},
+                       title, words)
+    for n, said in listed.items():
+        kinds[n] = ("person", False) if said else ("thing", False)
+    if listed:
+        report.append("names list settled %d names (%d people)" % (
+            len(listed), sum(1 for v in listed.values() if v)))
     by_kind = Counter(k for k, _m in kinds.values())
     report.append("%d names found; %d asked about: %s" % (
         len(names), len(asked_about),
@@ -693,7 +709,7 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
             if kind == "" and (n in remembered or n == hero):
                 keep.append(n)
             continue
-        if matters or e["n"] >= 4 or n in remembered or n == hero:
+        if matters or e["n"] >= 4 or n in remembered or n == hero or listed.get(n):
             keep.append(n)
     set_aside = sorted((n for n in asked_about if kinds.get(n, ("",))[0] in
                         ("group", "real")), key=lambda n: -asked_about[n]["n"])
@@ -713,17 +729,29 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
         shown = ident.get(n) or n
         if view:
             shown = view.name_of(shown, True) or view.name_of(n, True) or shown
+        if names_list and not (view and view.name_of(shown, True)):
+            shown = names_list.of(n) or names_list.of(shown) or shown
         groups.setdefault(shown, []).append(n)
+
+    def keep_as(n):
+        return (view.name_of(n, True) if view else "") or \
+            (names_list.of(n) if names_list else "")
     groups = merge_names(groups, {n: e["n"] for n, e in names.items()}, docs,
-                         keep_as=(lambda n: view.name_of(n, True)) if view else None,
-                         hero=hero)
+                         keep_as=keep_as if (view or names_list) else None, hero=hero)
+    # a list name the book never uses ("Mordecai the Game Guide") gives way
+    # to the form the book uses most
+    for k in [k for k in groups if k not in names and not (view and view.name_of(k, True))]:
+        best = max(groups[k], key=lambda f: names.get(f, {}).get("n", 0))
+        if best != k and best not in groups:
+            groups[best] = groups.pop(k)
     people = []
     for shown, forms in groups.items():
         matters = any(kinds.get(f, ("", False))[1] for f in forms)
         p = Person(shown, forms, matters)
         p.mentions = _mentions(docs, p.forms)
         p.spoke = _first_spoken(docs, p.forms)
-        p.remembered = bool(view and any(view.name_of(f, True) for f in p.forms))
+        p.remembered = bool(view and any(view.name_of(f, True) for f in p.forms)) or \
+            any(listed.get(f) for f in p.forms)
         if p.mentions:
             people.append(p)
     people.sort(key=lambda p: -len(p.mentions))

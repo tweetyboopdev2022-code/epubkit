@@ -353,3 +353,79 @@ class View:
                 size += len(ln)
             out.extend(reversed(told))
         return "\n".join(out)
+
+
+# ------------------------------------------------------------ names list
+
+
+class Names:
+    """A series' names list, from a fan wiki or written by hand: who goes by
+    which names, and which names are not people at all. It never says who
+    anyone is, so no description can come from it, only which names to join
+    and which to leave out of the who's who.
+
+    The file sits next to the memory as "<series>.names.tsv", one row each::
+
+        Mordecai<TAB>Pocket Kuma; Mordy<TAB>person<TAB>1
+        Desperado Club<TAB><TAB>place<TAB>3
+
+    name, other names (";" between them), kind, and the book it first comes
+    up in. A row from a later book than the one being read is skipped, so a
+    name the reader hasn't met yet can't join or split anyone. Lines
+    starting with "#" are notes.
+    """
+
+    PEOPLE = {"person", "crawler", "npc", "god", "ai", "pet", "character"}
+
+    def __init__(self, rows=()):
+        self.owner: dict[str, str] = {}     # lower-case name -> list name
+        self.kind: dict[str, str] = {}      # list name -> its kind
+        for name, others, kind in rows:
+            name = name.strip()
+            if not name:
+                continue
+            kind = (kind or "").strip().lower()
+            self.kind[name] = "person" if kind in self.PEOPLE else (kind or "")
+            for n in [name] + others:
+                low = n.strip().lower()
+                if not low:
+                    continue
+                # a name two rows both claim joins neither
+                if self.owner.get(low, name) != name:
+                    self.owner[low] = ""
+                else:
+                    self.owner[low] = name
+
+    @classmethod
+    def open(cls, folder, series: str, upto=None) -> Names:
+        folder = Path(folder) if folder else default_dir()
+        path = folder / (slug(series) + ".names.tsv")
+        limit = _num(_key(upto)) if upto is not None else float("inf")
+        rows = []
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        for line in text.splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            cells = line.split("\t") + ["", "", "", ""]
+            first = cells[3].strip()
+            if first and _num(first) > limit:
+                continue
+            rows.append((cells[0], [o for o in cells[1].split(";") if o.strip()], cells[2]))
+        return cls(rows)
+
+    def __bool__(self) -> bool:
+        return bool(self.owner)
+
+    def of(self, name: str) -> str:
+        """The list's name for this one, or "" when it isn't there."""
+        return self.owner.get((name or "").strip().lower(), "")
+
+    def is_person(self, name: str):
+        """True, False, or None when the list doesn't say."""
+        who = self.of(name)
+        if not who or not self.kind.get(who):
+            return None
+        return self.kind[who] == "person"

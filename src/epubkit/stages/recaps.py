@@ -587,6 +587,12 @@ class RecapStage(Stage):
         if getattr(rc, "series_memory", True) and series and index is not None:
             memory = series_memory.Memory.open(getattr(rc, "series_dir", "") or None, series)
             view = memory.before(index)
+        names_list = None
+        if series:
+            names_list = series_memory.Names.open(getattr(rc, "series_dir", "") or None,
+                                                  series, index)
+            if names_list:
+                ctx.note("names list: %d names for %s" % (len(names_list.owner), series))
         ctx.report("finding the main character (%d passages to go)" % len(passages))
         hero = _lead_for(ctx, rc, view, docs, lang, answers)
         if hero:
@@ -617,7 +623,7 @@ class RecapStage(Stage):
             people, report, seen = book.build(
                 ctx, docs, ask, hero=hero, first_person=first_person, lang=lang,
                 view=view, title=_book_title(ctx.path),
-                workers=max(1, ctx.config.ai.concurrency))
+                workers=max(1, ctx.config.ai.concurrency), names_list=names_list)
             for line in report:
                 ctx.note("who's who: " + line)
             _cast_report(rc, ctx.path, report, people)

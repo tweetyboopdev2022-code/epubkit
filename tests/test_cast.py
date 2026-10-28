@@ -480,3 +480,44 @@ def test_a_long_sentence_is_cut_around_the_name():
     long = "It was a very long day " * 20 + "and Wren came home at last " + "slowly " * 30 + "."
     got = C._sentence_with(long, pat)
     assert "Wren" in got and len(got) <= C.SEEN_CHARS + 2
+
+
+# -- a names list for the series ---------------------------------------------------
+
+NAMES_TSV = (
+    "# from the fan wiki: names and kinds only\n"
+    "Mordecai\tPocket Kuma; Mordy\tperson\t1\n"
+    "Syndicate\tthe Syndicate\tgroup\t1\n"
+    "Katia Grimaldi\tKatia\tcrawler\t2\n"
+    "Donut\tPrincess Donut\tpet\t1\n"
+    "Katia's Secret\tDonut\tperson\t7\n"
+)
+
+
+def test_a_names_list_from_later_books_is_never_read(tmp_path):
+    (tmp_path / "Dungeon Crawler Carl.names.tsv").write_text(NAMES_TSV)
+    from epubkit import series_memory as S
+    five = S.Names.open(tmp_path, "Dungeon Crawler Carl", 5)
+    assert five.of("pocket kuma") == "Mordecai" and five.of("Donut") == "Donut"
+    assert five.is_person("Syndicate") is False and five.is_person("Katia") is True
+    assert five.is_person("Zev") is None
+    # book 7's row would make Donut someone else; book 5 never sees it
+    assert S.Names.open(tmp_path, "Dungeon Crawler Carl", 7).of("Donut") == ""
+    assert not S.Names.open(tmp_path / "none", "Dungeon Crawler Carl", 5)
+
+
+def test_a_names_list_joins_nicknames_and_settles_what_is_a_person(tmp_path):
+    (tmp_path / "s").mkdir()
+    (tmp_path / "s" / "Dungeon Crawler Carl.names.tsv").write_text(NAMES_TSV)
+    ch3 = ["Pocket Kuma waved from the shelf. Carl waved back. %s" % FILLER,
+           "Pocket Kuma said nothing more. %s" % FILLER]
+    book = dungeon(tmp_path, [CH1, CH2, ch3])
+    _set_series(book, "Dungeon Crawler Carl")
+    # the model is wrong about the Syndicate; the list wins and nobody asks it
+    model = Model(dict(KINDS, Syndicate=("person", "yes")))
+    run(tmp_path, book, model, **BOOK, **{"recaps.series_dir": str(tmp_path / "s")})
+    names = {r[3] for r in people_of(book)}
+    assert "Mordecai" in names and "Pocket Kuma" not in names
+    assert "Syndicate" not in names
+    sorts = [c for c in model.calls if "Name | kind | matters" in c]
+    assert not any(re.search(r"(?m)^- (Syndicate|Mordecai|Pocket Kuma):", c) for c in sorts)
