@@ -460,3 +460,23 @@ def test_a_name_the_earlier_books_know_can_join_one_they_do_not():
     used = {"Seamus": 40, "Seamus Finnigan": 3}
     got = C.merge_names(groups, used, [], keep_as=lambda n: n if n == "Seamus" else "")
     assert list(got) == ["Seamus"] and "Seamus Finnigan" in got["Seamus"]
+
+
+def test_where_someone_was_last_named_is_the_books_own_sentence(tmp_path):
+    book = dungeon(tmp_path, [CH1, CH2])
+    run(tmp_path, book, Model(KINDS), **BOOK)
+    seen = rows(book, "seen.tsv")
+    mor = [r for r in seen if r[3] == "Mordecai"]
+    assert mor and all(len(r) == 5 for r in seen)
+    assert mor[0][4] == "Mordecai waited inside the guild hall with a potion in his hand."
+    # the lead is named everywhere and gets none
+    assert not [r for r in seen if r[3] == "Carl"]
+    # nobody who is not on the list
+    assert {r[3] for r in seen} <= {r[3] for r in people_of(book)}
+
+
+def test_a_long_sentence_is_cut_around_the_name():
+    pat = C._form_pattern(["Wren"])
+    long = "It was a very long day " * 20 + "and Wren came home at last " + "slowly " * 30 + "."
+    got = C._sentence_with(long, pat)
+    assert "Wren" in got and len(got) <= C.SEEN_CHARS + 2

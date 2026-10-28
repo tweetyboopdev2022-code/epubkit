@@ -614,19 +614,20 @@ class RecapStage(Stage):
 
             def ask(prompt, system, usable):
                 return answers.ask(ctx.provider, prompt, system, usable=usable)
-            people, report = book.build(
+            people, report, seen = book.build(
                 ctx, docs, ask, hero=hero, first_person=first_person, lang=lang,
                 view=view, title=_book_title(ctx.path),
                 workers=max(1, ctx.config.ai.concurrency))
             for line in report:
                 ctx.note("who's who: " + line)
             _cast_report(rc, ctx.path, report, people)
+            state["seen"] = seen
             return people
 
         state = dict(passage_words=passage_words, kept_meta=kept_meta, cast_only=cast_only,
                      hero=hero, lang=lang, first_person=first_person, memory=memory,
                      series=series, index=index, words=words, answers=answers,
-                     book_cast=book_cast)
+                     book_cast=book_cast, seen=())
         if book_cast and cast_only:
             return self._write(ctx, kept, whole_book_cast(), **state)
 
@@ -758,7 +759,7 @@ class RecapStage(Stage):
         return self._write(ctx, parts, people, **state)
 
     def _write(self, ctx, parts, people, *, passage_words, kept_meta, cast_only, hero,
-               lang, first_person, memory, series, index, words, answers, book_cast):
+               lang, first_person, memory, series, index, words, answers, book_cast, seen=()):
         rc = ctx.config.recaps
         legacy = bool(getattr(rc, "legacy_files", False))
         chapters = _chapter_rows(parts)
@@ -778,7 +779,7 @@ class RecapStage(Stage):
         if memory is not None:
             meta += [("series", series), ("series_index", str(index))]
         _embed(ctx.path, parts, people, chapters if legacy else [], cast,
-               _spine(ctx.path), meta)
+               _spine(ctx.path), meta, seen)
         answers.forget()
 
         if memory is not None:
@@ -2079,7 +2080,7 @@ def _clean(s: str) -> str:
     return re.sub(r"[\t\r\n]+", " ", str(s)).strip()
 
 
-def _embed(book: Path, parts, people, chapters, cast, spine=(), meta=()) -> None:
+def _embed(book: Path, parts, people, chapters, cast, spine=(), meta=(), seen=()) -> None:
     """Write the TSVs into the book, in the manifest and never the spine.
 
     Declared so EPUBCheck does not call them undeclared resources; out of the
@@ -2097,6 +2098,10 @@ def _embed(book: Path, parts, people, chapters, cast, spine=(), meta=()) -> None
         "meta.tsv": "\n".join("%s\t%s" % (k, _clean(v)) for k, v in meta),
         "cast.tsv": "\n".join("%d\t%s\t%s\t%s" % (o, p, _clean(w), _clean(t))
                               for o, p, w, t in cast),
+        # where each person was last named: order, path, paragraph, name, the
+        # book's own sentence
+        "seen.tsv": "\n".join("%d\t%s\t%d\t%s\t%s" % (o, p, n, _clean(w), _clean(t))
+                              for o, p, n, w, t in seen),
     }
     # built in the system temp folder, never beside the book: a library
     # server watching that folder would import a stray .epub as a new book
@@ -2140,7 +2145,7 @@ def _embed(book: Path, parts, people, chapters, cast, spine=(), meta=()) -> None
             os.remove(tmp)
 
 
-_OURS = ("recaps", "cast", "parts", "people", "spine", "meta")
+_OURS = ("recaps", "cast", "parts", "people", "spine", "meta", "seen")
 
 
 def _is_ours(name: str, base: str) -> bool:

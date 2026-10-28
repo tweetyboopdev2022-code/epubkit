@@ -916,7 +916,54 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
     if lost:
         report.append("left out: " + ", ".join(p.name for p in lost[:40]))
         report.extend("  %s: %s" % (p.name, p.why) for p in lost[:40] if p.why)
-    return rows, report
+    return rows, report, seen_rows([p for p in people if p.rows], hero)
+
+
+SEEN_GAP = 8        # paragraphs between two "last seen" lines for one person
+SEEN_CHARS = 180
+
+
+def _sentence_with(text: str, pat: re.Pattern) -> str:
+    """The sentence of an extract that names the person, in the book's own words."""
+    text = text.strip("… ")
+    m = pat.search(text)
+    if not m:
+        return ""
+    a = max(text.rfind(c, 0, m.start()) for c in ".!?")
+    a = a + 1 if a >= 0 else 0
+    ends = [i for i in (text.find(c, m.end()) for c in ".!?") if i != -1]
+    b = min(ends) + 1 if ends else len(text)
+    out = re.sub(r"\s+", " ", text[a:b]).strip(" \"”“'’")
+    if len(out) > SEEN_CHARS:
+        # keep the name in view: cut around it
+        at = out.find(m.group(0))
+        lo = max(0, min(at - SEEN_CHARS // 3, len(out) - SEEN_CHARS))
+        out = ("…" if lo else "") + out[lo:lo + SEEN_CHARS].strip() + "…"
+    return out
+
+
+def seen_rows(people, hero: str = ""):
+    """Where each person was last named, in the book's own words: rows of
+    (order, path, para, name, sentence), at most one per person every
+    SEEN_GAP paragraphs. No model wrote these, so they cannot be wrong; the
+    device shows the latest one before the reader's page under the entry.
+    The lead is named on nearly every page and gets none."""
+    out = []
+    for p in people:
+        if hero and p.name == hero:
+            continue
+        pat = _form_pattern(p.forms)
+        last = None
+        for order, path, para, extract in p.mentions:
+            here = _pos(order, para)
+            if last is not None and here - last < SEEN_GAP:
+                continue
+            line = _sentence_with(extract, pat)
+            if line:
+                out.append((order, path, para, p.name, line))
+                last = here
+    out.sort(key=lambda r: (_pos(r[0], r[2]), r[3]))
+    return out
 
 
 _SPEECH = (r"said|says|asked|asks|replied|replies|shouted|yelled|whispered|growled|"
