@@ -356,3 +356,40 @@ def test_a_title_around_a_short_form_joins_the_full_name():
     used = {"Princess Donut": 80, "Donut": 800, "Even Donut": 1, "Goddamnit Donut": 2}
     got = C.merge_names(groups, used, [], hero="Carl")
     assert set(got) == {"Princess Donut"}
+
+
+def test_a_name_that_is_a_french_word_is_a_name_in_an_english_book():
+    docs = [(1, "a", "", [(0, "Katia waved at Elle. Elle laughed, and Carl saw Elle wave back. "
+                              "Then Elle left.")])]
+    assert "Elle" in C.find_names(docs)
+    fr = [(1, "a", "", [(0, "Elle partit. Puis elle revint, et elle rit avec Jeanne. "
+                            "Mais elle dit non, et Jeanne vit Elle.")])]
+    assert "Elle" not in C.find_names(fr)
+
+
+def test_an_entry_about_someone_else_names_that_someone():
+    owners = {"Kiwi": "Kiwi", "Tserendolgor": "Tserendolgor", "Carl": "Carl"}
+    assert C.alias_of("Kiwi is the Level 60 leader of the pack.",
+                      ["Mongoliensis Pack Leader"], owners) == "Kiwi"
+    assert C.alias_of("The nickname for Tserendolgor, ranked number 38.",
+                      ["Ren"], owners) == "Tserendolgor"
+    assert C.alias_of("A crawler who fights beside Carl.", ["Tran"], owners) == ""
+
+
+def test_miss_and_a_first_name_is_that_person_but_mrs_and_a_family_name_is_not():
+    groups = {"Bea": ["Bea", "Beatrice"], "Miss Beatrice": ["Miss Beatrice"],
+              "Ron Weasley": ["Ron Weasley", "Ron"], "Fred Weasley": ["Fred Weasley"],
+              "Mrs. Weasley": ["Mrs. Weasley"], "Weasley": ["Weasley"]}
+    used = {"Bea": 30, "Beatrice": 10, "Miss Beatrice": 21, "Ron Weasley": 40, "Ron": 400,
+            "Fred Weasley": 5, "Mrs. Weasley": 30, "Weasley": 60}
+    got = C.merge_names(groups, used, [], hero="Harry")
+    assert "Miss Beatrice" not in got and "Miss Beatrice" in got["Bea"]
+    assert "Mrs. Weasley" in got
+
+
+def test_one_row_per_person_per_place():
+    p = C.Person("Maxim Popov", ["Maxim Popov"], True)
+    p.mentions = [(17, "a", 90, "x")]
+    p.rows = [(17, "a", 90, "heard", "A crawler."), (17, "a", 90, "met", "A crawler.")]
+    got = C._rows([p], "Carl")
+    assert len(got) == 1 and got[0][4] == "met"

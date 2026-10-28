@@ -81,7 +81,7 @@ Rules for ENTRY:
 - Only lasting facts that the extracts or the earlier books state outright: what they are, their role, and who they are to the people around them. Not where they are or what they are doing in this scene.
 - When an extract is someone speaking, "I", "me" and "my" are the speaker, not {name}. Name a relationship (brother, owner, partner, boss) only if an extract says it in so many words.
 - Leave out spells, skills, items and levels unless they are what the person is known for.
-- Never write "the main character", "the narrator", "the protagonist", "currently", "not yet connected", or anything about "the extracts", "the passage" or "the reader".
+- Never write "the main character", "the narrator", "the speaker", "the protagonist", "currently", "not yet connected", or anything about "the extracts", "the passage" or "the reader".
 - Do not start with their name."""
 
 UPDATE = """You keep a who's-who entry up to date for a reader of "{title}". The reader has read up to the end of the extracts below and nothing after them.
@@ -104,8 +104,9 @@ ENTRY: SAME if nothing lasting changed; otherwise the whole entry again, at most
 Rules for ENTRY:
 - Only lasting facts that the extracts, the entry so far or the earlier books state outright. Not where they are or what they are doing in this scene.
 - When an extract is someone speaking, "I", "me" and "my" are the speaker, not {name}.
+- If the extracts show that something in the entry so far is wrong, write the whole entry again without it.
 - Leave out spells, skills, items and levels unless they are what the person is known for.
-- Never write "the main character", "the narrator", "the protagonist", "currently", "not yet connected", or anything about "the extracts", "the passage" or "the reader".
+- Never write "the main character", "the narrator", "the speaker", "the protagonist", "currently", "not yet connected", or anything about "the extracts", "the passage" or "the reader".
 - Do not start with their name."""
 
 AGAIN = """
@@ -174,6 +175,7 @@ ENTRY: SAME si rien de durable n'a changé ; sinon toute la fiche, en deux phras
 
 Règles pour ENTRY :
 - Seulement des faits durables, dits clairement par les extraits, la fiche ou les livres précédents. Pas où il est ni ce qu'il fait dans cette scène.
+- Si les extraits montrent qu'un point de la fiche est faux, réécrivez toute la fiche sans lui.
 - N'écrivez jamais « le personnage principal », « le narrateur », « actuellement », « pas encore lié », ni rien sur « les extraits », « le passage » ou « le lecteur ».
 - Ne commencez pas par son nom."""
 
@@ -265,6 +267,10 @@ mr mrs ms dr sir madam miss lord lady chapter part book prologue epilogue interl
 monday tuesday wednesday thursday friday saturday sunday january february march april
 may june july august september october november december
 god christ jesus heaven hell okay alright please thanks thank sorry wait look
+""".split())
+# French grammar words are grammar only in a book that uses them as words:
+# DCC 5 lost Elle, named 105 times, to the pronoun "elle"
+_COMMON_FR = set("""
 le la les un une des et ou mais donc puis alors je tu il elle nous vous ils elles
 mon ma mes ton ta tes son sa ses notre votre leur leurs ce cette ces qui que quoi
 oui non bon bien ah oh eh chapitre partie livre monsieur madame mademoiselle
@@ -276,12 +282,13 @@ _ENDS = re.compile(r"(?:['’]s|['’])$")
 _START = re.compile(r"(?:^|[.!?…:;—–\"“”«»(\[]|\s-)\s*$")
 
 
-def _clean_name(raw: str) -> str:
+def _clean_name(raw: str, common=None) -> str:
+    common = _COMMON | _COMMON_FR if common is None else common
     name = _ENDS.sub("", raw.strip()).strip("-’'")
     words = name.split()
     # "The" or "Then" at the front is grammar; "Mr." and "Dr." are not
     while words and words[0].lower().rstrip(".") not in _TITLES and \
-            words[0].lower() in _COMMON:
+            words[0].lower() in common:
         words = words[1:]
     while words and words[-1].lower() in _PARTICLES:
         words = words[:-1]
@@ -304,11 +311,12 @@ def find_names(docs) -> dict:
     for _order, _path, _label, paras in docs:
         for _n, text in paras:
             lower.update(w for w in re.findall(r"(?<![\w'’])[a-zà-ÿ][\w'’]*", text))
+    common = _COMMON | {w for w in _COMMON_FR if lower[w] >= 3}
     for order, _path, _label, paras in docs:
         for n, text in paras:
             for m in NAME.finditer(text):
-                name = _clean_name(m.group(0))
-                if not name or _caps_only(name) or name.lower() in _COMMON:
+                name = _clean_name(m.group(0), common)
+                if not name or _caps_only(name) or name.lower() in common:
                     continue
                 if len(name) < 2 or any(w.lower() in _PRONOUNS for w in name.split()):
                     continue            # "Since I", "All I"
@@ -391,7 +399,8 @@ LEAK = re.compile(
     r"the text|not (?:yet )?(?:connected|linked|mentioned|named|known|stated|specified|clear)|"
     r"no (?:information|details?)|unknown|unclear|the main character|the protagonist|"
     r"main character of|les extraits?|le passage|le lecteur|pas encore li[ée]e?s?|"
-    r"personnage principal|inconnue?|the narrator|le narrateur|la narratrice)\b")
+    r"personnage principal|inconnue?|the narrator|le narrateur|la narratrice|the speaker|"
+    r"le locuteur|la locutrice)\b")
 # a scene, not who someone is: Carl was "in the vice principal's office with
 # a companion" for the whole of DCC 5
 SCENE = re.compile(r"(?i)\b(?:currently|right now|at the moment|at present|for now|"
@@ -422,6 +431,20 @@ def _unnamed(entry: str, forms) -> str:
         return entry
     rest = entry[m.end():]
     return rest[:1].upper() + rest[1:]
+
+
+def alias_of(entry: str, own_forms, owners: dict) -> str:
+    """The person an entry says this name is: "Kiwi is the leader of the
+    pack" written for "Mongoliensis Pack Leader", "The nickname for
+    Tserendolgor" written for "Ren". owners: form -> shown name."""
+    names = [f for f in owners if f not in own_forms and len(f) > 2]
+    if not names:
+        return ""
+    alts = "|".join(re.escape(f) for f in sorted(names, key=len, reverse=True))
+    m = re.match(r"\W*(%s)\s+(?:is|was|est|était)\b" % alts, entry) or \
+        re.search(r"(?i:\b(?:nickname|another name|title|surnom|autre nom|titre)\s+"
+                  r"(?:for|of|de|d['’])\s*)(%s)(?![\w])" % alts, entry)
+    return owners[m.group(1)] if m else ""
 
 
 def parse_entry(text: str) -> tuple[str, str, str] | None:
@@ -491,7 +514,7 @@ def problems(entry: str, quote: str, source: str, name_forms, others: dict,
         if w in mine or w in have:
             continue
         if w.isdigit() or (w[:1].isupper() and i > 0 and not _starts_sentence(entry, w)):
-            if w.lower() not in _COMMON and w not in missing:
+            if w.lower() not in _COMMON and w.lower() not in _COMMON_FR and w not in missing:
                 missing.append(w)
     if missing:
         out.append(say["unbacked"].format(what=", ".join(missing[:5])))
@@ -593,6 +616,7 @@ class Person:
         self.not_person = False
         self.remembered = False
         self.spoke = None               # (order, path, para) first heard speaking
+        self.alias_of = ""              # the entry said this is someone else
 
 
 def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
@@ -660,6 +684,8 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
         if p.mentions:
             people.append(p)
     people.sort(key=lambda p: -len(p.mentions))
+    owners = {f: p.name for p in people for f in p.forms}
+    counts = {p.name: len(p.mentions) for p in people}
     ctx.note("who's who: %d people from %d names" % (len(people), len(names)))
 
     about = []
@@ -716,6 +742,13 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                     return "", None
                 reason = [words["problems"]["person"].format(name=p.name)]
                 continue
+            # a rare name whose entry is about someone the book names more
+            # is that person under a title or a nickname
+            other = "" if update or len(p.mentions) >= OFTEN else \
+                alias_of(entry, p.forms, owners)
+            if other and counts.get(other, 0) > len(p.mentions):
+                p.alias_of = other
+                return "", None
             entry = _trim(_unnamed(entry, p.forms))
             with lock:
                 others = {w: e for w, e in current.items() if w != p.name}
@@ -735,7 +768,7 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
         f_order, f_path, f_para = first[0], first[1], first[2]
         extracts = [first[3]] + _following(docs, f_order, f_para)
         status, entry = one_question(p, words["intro"], extracts)
-        if p.not_person:
+        if p.not_person or p.alias_of:
             with lock:
                 done[0] += 1
             return
@@ -766,7 +799,7 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
             else:
                 # the first entry failed its checks: try again from here
                 status, entry = one_question(p, words["intro"], picked)
-            if p.not_person:
+            if p.not_person or p.alias_of:
                 break
             if entry is None:
                 continue
@@ -798,7 +831,10 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
     dropped = [p.name for p in people if p.not_person]
     if dropped:
         report.append("not people after all: " + ", ".join(dropped[:40]))
-    people = [p for p in people if not p.not_person]
+    same = ["%s (%s)" % (p.name, p.alias_of) for p in people if p.alias_of]
+    if same:
+        report.append("someone else's name: " + ", ".join(same[:40]))
+    people = [p for p in people if not p.not_person and not p.alias_of]
     rows = _rows(people, hero)
     shown = [p for p in people if p.rows]
     report.append("%d people written, %d left out after failing the checks twice; "
@@ -901,6 +937,18 @@ def merge_names(groups: dict, used: dict, docs, keep_as=None, hero: str = "") ->
             a, b = k, hits[0]
             big, small = (a, b) if uses.get(a, 0) >= uses.get(b, 0) else (b, a)
             into(small, big)
+    # "Miss Beatrice" is Bea when Beatrice is a first name; "Mrs. Weasley"
+    # is nobody's when Weasley ends several names
+    hon = re.compile(r"^(?:Mr|Mrs|Ms|Miss|Mme|Mlle|Madame|Monsieur)\.?\s+(\S+)$")
+    ends = Counter(n.split()[-1] for n in used if len(n.split()) > 1 and not hon.match(n))
+    for k in list(groups):
+        m = hon.match(k)
+        if k not in groups or not m or ends[m.group(1)] >= 2:
+            continue
+        # a bare "Weasley" entry is a family, not a first name
+        owner = [o for o in groups if o != k and o != m.group(1) and m.group(1) in groups[o]]
+        if len(owner) == 1:
+            into(k, owner[0])
     # a rare longer form around a common name is that person under a title or
     # a stray word: "Even Donut", "Dungeon Princess Donut", "NW Princess
     # Donut the Queen". Never a family form: "Mrs. Weasley" is not Ron.
@@ -969,4 +1017,6 @@ def _rows(people, hero: str):
         if r[4] == "met":
             met.add(r[3])
         fixed.append(r if r[3] not in met else r[:4] + ("met",) + r[5:])
-    return fixed
+    # one row per person per place: the last one, which knows the most
+    last = {(r[0], r[2], r[3]): i for i, r in enumerate(fixed)}
+    return [r for i, r in enumerate(fixed) if last[(r[0], r[2], r[3])] == i]
