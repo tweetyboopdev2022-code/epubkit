@@ -373,6 +373,10 @@ def cmd_run(args) -> int:
                "recaps", "-c", str(cfg), str(book)]
         if args.force:
             cmd.append("--force")
+        # the Workshop's progress and pause/skip files, passed through to each book
+        for flag, path in (("--status", args.status), ("--control", args.control)):
+            if path:
+                cmd += [flag, path]
         rc = subprocess.call(cmd)
         after = sha(book)
         a = R.audit(book)
@@ -682,6 +686,9 @@ def main(argv=None) -> int:
     r.add_argument("--keep-older-passages", action="store_true",
                    help="leave books that already have passage recaps in an older "
                         "layout alone instead of redoing them")
+    r.add_argument("--status", default="", help="write progress to this JSON file (Workshop)")
+    r.add_argument("--control", default="",
+                   help="read pause/stop/skip from this JSON file (Workshop)")
     r.add_argument("--dry-run", action="store_true", help="list what would be done")
     r.add_argument("--model", default=DEFAULT_MODEL)
     r.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
