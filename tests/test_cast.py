@@ -326,3 +326,25 @@ def test_pronouns_do_not_make_a_name():
                               "They said All I wanted. Wren nodded.")])]
     names = C.find_names(docs)
     assert "Since I" not in names and "All I" not in names
+
+
+def test_a_name_the_book_uses_often_is_never_dropped_as_not_a_person(tmp_path):
+    class Kinds(Model):
+        def answer(self, prompt):
+            if re.search(r"(?m)^Person: Mordecai", prompt) and "Their entry so far" not in prompt \
+                    and "answer KIND: person" not in prompt:
+                return "KIND: not a person (a pocket kuma)\nQUOTE: -\nSTATUS: heard\nENTRY: -"
+            return super().answer(prompt)
+    ch = [CH1 + ["Mordecai poured a drink. %s" % FILLER] * 12, CH2]
+    book = dungeon(tmp_path, ch)
+    run(tmp_path, book, Kinds(KINDS), **BOOK)
+    assert "Mordecai" in {r[3] for r in people_of(book)}
+
+
+def test_a_title_around_a_name_is_that_person():
+    groups = {n: [n] for n in ["Donut", "Even Donut", "Dungeon Princess Donut",
+                               "NW Princess Donut the Queen", "Mrs. Weasley", "Weasley"]}
+    used = {"Donut": 900, "Even Donut": 1, "Dungeon Princess Donut": 2,
+            "NW Princess Donut the Queen": 1, "Mrs. Weasley": 2, "Weasley": 60}
+    got = C.merge_names(groups, used, [], hero="Carl")
+    assert set(got) == {"Donut", "Mrs. Weasley", "Weasley"}

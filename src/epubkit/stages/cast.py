@@ -72,7 +72,7 @@ Extracts that mention them, in order (the last is where the reader is now):
 {extracts}
 
 Answer in exactly four lines:
-KIND: person, or not a person (a group, species, place, thing, title, show, spell or move)
+KIND: person (anyone with a name who acts or speaks in the story: human, animal, monster, god, ghost, AI or game guide, whatever form they are in now), or not a person (a group, species, place, object, title, show, spell or move)
 QUOTE: <copy a few words, exactly, from the extract that best shows who they are>
 STATUS: met or heard (met = they have appeared in person; heard = so far they are only talked about)
 ENTRY: <one or two short sentences saying who {name} is and why they matter to the story so far>
@@ -143,7 +143,7 @@ Extraits qui le mentionnent, dans l'ordre (le dernier est l'endroit où en est l
 {extracts}
 
 Répondez en exactement quatre lignes :
-KIND: person, ou not a person (un groupe, une espèce, un lieu, un objet, un titre, une émission, un sort)
+KIND: person (quiconque a un nom et agit ou parle dans l'histoire : humain, animal, monstre, dieu, fantôme, IA), ou not a person (un groupe, une espèce, un lieu, un objet, un titre, une émission, un sort)
 QUOTE: <recopiez exactement quelques mots de l'extrait qui montre le mieux qui c'est>
 STATUS: met ou heard (met = le personnage est apparu en personne ; heard = on n'a fait qu'en parler)
 ENTRY: <une ou deux phrases courtes, en français, qui disent qui est {name} et pourquoi il compte pour l'histoire jusqu'ici>
@@ -195,6 +195,7 @@ WORDS = {
         "unknown": "",
         "problems": {
             "shape": "it was not three lines starting QUOTE:, STATUS: and ENTRY:",
+            "person": "{name} is named again and again in the book: answer KIND: person and write their entry",
             "quote": "the QUOTE is not words copied from the extracts",
             "leak": "the ENTRY talks about the extracts, the reader, or is a placeholder",
             "unbacked": "the ENTRY names {what}, which the extracts do not",
@@ -217,6 +218,7 @@ WORDS = {
         "unknown": "",
         "problems": {
             "shape": "ce n'était pas trois lignes commençant par QUOTE:, STATUS: et ENTRY:",
+            "person": "{name} est cité très souvent dans le livre : répondez KIND: person et écrivez sa fiche",
             "quote": "la QUOTE n'est pas recopiée des extraits",
             "leak": "l'ENTRY parle des extraits, du lecteur, ou ne dit rien",
             "unbacked": "l'ENTRY cite {what}, que les extraits ne citent pas",
@@ -240,6 +242,8 @@ EXTRACTS = 10
 EXTRACT_CHARS = 420
 #: names sorted in one question
 SORT_BATCH = 30
+#: a name used this often is a person, whatever one answer says
+OFTEN = 10
 #: at most this many words in an entry
 MAX_WORDS = 40
 
@@ -587,6 +591,7 @@ class Person:
         self.retried = 0
         self.failed = 0
         self.not_person = False
+        self.remembered = False
         self.spoke = None               # (order, path, para) first heard speaking
 
 
@@ -651,6 +656,7 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
         p = Person(shown, forms, matters)
         p.mentions = _mentions(docs, p.forms)
         p.spoke = _first_spoken(docs, p.forms)
+        p.remembered = bool(view and any(view.name_of(f, True) for f in p.forms))
         if p.mentions:
             people.append(p)
     people.sort(key=lambda p: -len(p.mentions))
@@ -665,6 +671,9 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
     done = [0]
     lock = threading.Lock()
     current: dict[str, str] = {}
+
+    def lead_of(p) -> bool:
+        return bool(hero) and p.name == hero
 
     def known_line(p) -> str:
         line = view.tie(p.name) if view else ""
@@ -697,8 +706,16 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 continue
             quote, status, entry = got
             if entry == "-" and not quote and not update:
-                p.not_person = True
-                return "", None
+                # Only a rare name is dropped on this say-so. Round two of
+                # the DCC pilot lost Mordecai from books 3 and 4 this way
+                # (he was in another body), and Sledge, Prepotente and the
+                # gods with him: someone the book names again and again,
+                # or the earlier books know, is a person.
+                if len(p.mentions) < OFTEN and not p.remembered and not lead_of(p):
+                    p.not_person = True
+                    return "", None
+                reason = [words["problems"]["person"].format(name=p.name)]
+                continue
             entry = _trim(_unnamed(entry, p.forms))
             with lock:
                 others = {w: e for w, e in current.items() if w != p.name}
@@ -884,6 +901,21 @@ def merge_names(groups: dict, used: dict, docs, keep_as=None, hero: str = "") ->
             a, b = k, hits[0]
             big, small = (a, b) if uses.get(a, 0) >= uses.get(b, 0) else (b, a)
             into(small, big)
+    # a rare longer form around a common name is that person under a title or
+    # a stray word: "Even Donut", "Dungeon Princess Donut", "NW Princess
+    # Donut the Queen". Never a family form: "Mrs. Weasley" is not Ron.
+    for k in sorted(groups, key=lambda k: -len(k.split())):
+        if k not in groups or len(k.split()) < 2 or uses.get(k, 0) > 3:
+            continue
+        if re.match(r"(?i)^(?:mr|mrs|ms|miss|aunt|uncle|madame?|monsieur|mme|mlle|"
+                    r"tante|oncle)\b", k):
+            continue
+        inside = [o for o in groups if o != k and o != k.strip()
+                  and re.search(r"(?<![\w'’])%s(?![\w'’])" % re.escape(o), k)
+                  and uses.get(o, 0) >= 10 * max(1, uses.get(k, 0))]
+        if inside:
+            inside.sort(key=lambda o: (-len(o.split()), -uses.get(o, 0)))
+            into(k, inside[0])
     # "Sledge, also known as Very Sullen"
     alts = {f: k for k, fs in groups.items() for f in fs}
     if len(alts) > 1:
