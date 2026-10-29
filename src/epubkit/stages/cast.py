@@ -446,9 +446,11 @@ def sort_names(ask, names: dict, title: str, words: dict) -> dict:
 
 # ------------------------------------------------------------------ entries
 
-ENTRY = re.compile(r"(?im)^\W*entry\W*:?\s*(.*)$")
-QUOTE = re.compile(r"(?im)^\W*quote\W*:?\s*(.*)$")
-STATUS = re.compile(r"(?im)^\W*status\W*:?\s*(\w+)")
+# never past the end of the line: an empty QUOTE took "STATUS: met" as the
+# quote in round 11, and lost Katia's best entry for it
+ENTRY = re.compile(r"(?im)^[^\w\n]*entry[^\w\n]*:?[ \t]*(.*)$")
+QUOTE = re.compile(r"(?im)^[^\w\n]*quote[^\w\n]*:?[ \t]*(.*)$")
+STATUS = re.compile(r"(?im)^[^\w\n]*status[^\w\n]*:?[ \t]*(\w+)")
 LEAK = re.compile(
     r"(?i)\b(?:extracts?|the passages?|this passage|the reader|reader['’]s notes|"
     r"the text|not (?:yet )?(?:connected|linked|mentioned|named|known|stated|specified|clear)|"
@@ -1077,6 +1079,9 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 others = {w: e for w, e in current.items() if w != p.name}
             reason = problems(entry, quote, source, p.forms, others, words, same_ok=update,
                               allowed=allowed)
+            if stale and attempt and words["problems"]["quote"] in reason:
+                # a fix the facts list asked for has no line of the book to quote
+                reason.remove(words["problems"]["quote"])
             if not (update and _same(entry)):
                 reason += event_problems(entry, quote, current_entry, change, words)
                 def backed(rels):

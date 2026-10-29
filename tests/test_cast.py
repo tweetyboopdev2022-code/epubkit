@@ -749,3 +749,8 @@ def test_a_wrong_identity_is_cut_off_and_the_rest_kept():
                               "actually a baby mantis named Circe Took.") == \
         "A deity associated with a desecrated temple."
     assert C._before_identity("She is Circe Took.") == ""
+
+
+def test_an_empty_quote_line_never_takes_the_next_line():
+    assert C.parse_entry("CHANGE: other\nQUOTE:\nSTATUS: met\nENTRY: A doppelganger.") == \
+        ("", "met", "A doppelganger.")
