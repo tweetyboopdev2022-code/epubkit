@@ -592,3 +592,92 @@ def test_one_bad_sentence_does_not_lose_the_whole_entry():
     assert reason
     kept, left = C._repaired(entry, "Cici sat down", src, ["Cici"], {}, words, "", "", set(), reason)
     assert kept == "A crawler who sits with Donut at the table." and left == []
+
+
+# -- the series facts list catches what the wiki says is wrong ----------------------
+
+FACTS_TSV = (
+    "# from the fan wiki: basic facts, each with the book it is first known in\n"
+    "Florin\tspecies\tcrocodilian\t3\n"
+    "Katia Grimaldi\tspecies\tdoppelganger\t2\n"
+    "Katia Grimaldi\talias\tKatia\t2\n"
+    "Carl\tspecies\thuman\t1\n"
+    "Bea\tex-girlfriend\tCarl\t1\n"
+    "Li Na\tsister\tLi Jun\t4\n"
+    "Li Na\tsister\tZhang\t9\n"
+    "Diwata\tnot\tCirce Took\t5\n"
+    "Circe Took\tmother\tVrah\t5\n"
+)
+
+
+def _facts(tmp_path, upto=5):
+    from epubkit import series_memory as S
+    (tmp_path / "Dungeon Crawler Carl.facts.tsv").write_text(FACTS_TSV)
+    return S.Facts.open(tmp_path, "Dungeon Crawler Carl", upto)
+
+
+def test_the_facts_list_catches_a_wrong_species(tmp_path):
+    facts, words = _facts(tmp_path), C.WORDS["en"]
+    got = C.wiki_problems("A human crawler who travels with Carl.", "Florin", facts, words)
+    assert got and "crocodilian" in got[0][1]
+    got = C.wiki_problems("A human crawler, and Donut's friend.", "Katia", facts, words)
+    assert got and "doppelganger" in got[0][1]
+    # a species named later in the sentence is someone else's
+    assert C.wiki_problems("A crocodilian who guards the human Carl.", "Florin",
+                           facts, words) == []
+    assert C.wiki_problems("A human crawler.", "Carl", facts, words) == []
+
+
+def test_the_facts_list_catches_a_wrong_identity_and_a_wrong_tie(tmp_path):
+    facts, words = _facts(tmp_path), C.WORDS["en"]
+    got = C.wiki_problems("A queen of the Hive. She is actually Circe Took.", "Diwata",
+                          facts, words)
+    assert [x for x, _r in got] == ["She is actually Circe Took."]
+    assert C.wiki_problems("A crawler, and the sister of Vrah.", "Circe Took", facts, words)
+
+
+def test_the_facts_list_backs_a_tie_from_an_earlier_book(tmp_path):
+    facts = _facts(tmp_path)
+    claims = C.unbacked_relations("Carl's girlfriend, now a crawler.", "Bea waved at Carl.")
+    assert claims and C.wiki_backed(claims, "Bea", facts) == []
+    # book 9's tie is not known in book 5, so it backs nothing
+    claims = C.unbacked_relations("The sister of Zhang.", "Li Na waved.")
+    assert C.wiki_backed(claims, "Li Na", facts) == claims
+    assert C.wiki_backed(claims, "Li Na", _facts(tmp_path, 9)) == []
+
+
+def test_a_wrong_species_is_asked_again_and_never_written(tmp_path):
+    (tmp_path / "s").mkdir()
+    (tmp_path / "s" / "Dungeon Crawler Carl.facts.tsv").write_text(FACTS_TSV)
+    book = dungeon(tmp_path, [CH1, CH2])
+    _set_series(book, "Dungeon Crawler Carl")
+    seen = []
+
+    def second(prompt):
+        seen.append(prompt)
+        return "A crawler who smiled at Donut in the room."
+    model = Model(KINDS, {"Katia": ["A human crawler who smiled at Donut.", second]})
+    run(tmp_path, book, model, **BOOK, **{"recaps.series_dir": str(tmp_path / "s")})
+    said = [r[6] for r in people_of(book) if r[3] == "Katia"]
+    assert said and not any("human" in s for s in said)
+    # the second question says what was wrong, but the entry comes from the model
+    assert seen and "not human" in seen[0]
+
+
+def test_known_mistakes_can_be_put_to_the_model_without_the_book(tmp_path):
+    from epubkit.tools import cast_mistakes as M
+    facts = _facts(tmp_path)
+    cases = [{"name": "Katia", "extracts": ["Katia smiled at Donut in the room."],
+              "must_not_say": "human", "should_say": ["Donut"]},
+             {"name": "Mordecai", "extracts": ["Mordecai waited in the guild hall."],
+              "must_not_say": ["killed"]}]
+    model = Model(KINDS, {"Katia": ["A human crawler who smiled at Donut.",
+                                    "A crawler who smiled at Donut in the room."],
+                          "Mordecai": ["A game guide who waits in the guild hall."]})
+
+    def ask(prompt, system, usable):
+        return model.complete(prompt, system).text
+    got, _r, _s = C.build(M._Ctx(), [], ask, facts=facts, probe=cases)
+    assert [M.score(c, e)[0] for c, e in zip(cases, got)] == ["right", "right"]
+    assert M.score(cases[0], "A human crawler.")[0] == "wrong"
+    assert M.score(cases[0], None)[0] == "lost"

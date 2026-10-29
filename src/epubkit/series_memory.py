@@ -437,3 +437,85 @@ class Names:
         if not who or not self.kind.get(who):
             return None
         return self.kind[who] == "person"
+
+
+# ------------------------------------------------------------ facts list
+
+
+class Facts:
+    """Basic facts about a series' people, from a fan wiki, used only to
+    catch an entry that gets them wrong: what someone is, who they are kin
+    to, and who they are not. Nothing in it is ever written into an entry.
+
+    The file sits next to the memory as "<series>.facts.tsv", one row each::
+
+        Florin<TAB>species<TAB>Crest<TAB>3
+        Bea<TAB>ex-girlfriend<TAB>Carl<TAB>1
+        Diwata<TAB>not<TAB>Circe<TAB>5
+        Mordecai<TAB>alias<TAB>Pocket Kuma<TAB>4
+
+    name, fact, value, and the book it first comes up in. A fact from a
+    later book than the one being read is skipped, so nothing can give away
+    what the reader hasn't reached. Lines starting with "#" are notes.
+    """
+
+    def __init__(self, rows=()):
+        self.owner: dict[str, str] = {}             # lower-case name or alias -> name
+        self.species: dict[str, set[str]] = {}      # name -> what they are
+        self.ties: dict[str, list[tuple[str, str]]] = {}    # name -> [(tie, other)]
+        self.nots: dict[str, set[str]] = {}         # name -> people they are not
+        rows = [(n.strip(), f.strip().lower(), v.strip()) for n, f, v in rows if n.strip()]
+        for name, fact, value in rows:
+            self.owner.setdefault(name.lower(), name)
+            if fact == "alias" and value:
+                self.owner.setdefault(value.lower(), name)
+        for name, fact, value in rows:
+            if value and fact not in ("alias", "species"):
+                self.owner.setdefault(value.lower(), value)     # kin with no row of their own
+        for name, fact, value in rows:
+            if not value:
+                continue
+            if fact == "species":
+                self.species.setdefault(name, set()).add(value.lower())
+            elif fact == "not":
+                self.nots.setdefault(name, set()).add(self.of(value) or value)
+            elif fact != "alias":
+                self.ties.setdefault(name, []).append((fact, self.of(value) or value))
+
+    @classmethod
+    def open(cls, folder, series: str, upto=None) -> Facts:
+        folder = Path(folder) if folder else default_dir()
+        path = folder / (slug(series) + ".facts.tsv")
+        limit = _num(_key(upto)) if upto is not None else float("inf")
+        rows = []
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        for line in text.splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            cells = line.split("\t") + ["", "", "", ""]
+            first = cells[3].strip()
+            if first and _num(first) > limit:
+                continue
+            rows.append((cells[0], cells[1], cells[2]))
+        return cls(rows)
+
+    def __bool__(self) -> bool:
+        return bool(self.owner)
+
+    def of(self, name: str) -> str:
+        return self.owner.get((name or "").strip().lower(), "")
+
+    def kinds(self) -> set[str]:
+        """Every species the list knows, for spotting one in an entry."""
+        return {s for v in self.species.values() for s in v}
+
+    def tie(self, name: str, other: str) -> list[str]:
+        """The ties the list gives between two people, either way round."""
+        a, b = self.of(name), self.of(other)
+        if not a or not b:
+            return []
+        return [t for t, o in self.ties.get(a, []) if o == b] + \
+               [t for t, o in self.ties.get(b, []) if o == a]

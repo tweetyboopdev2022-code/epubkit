@@ -243,7 +243,9 @@ WORDS = {
             "event": "the ENTRY says {what}, which your QUOTE and the entry so far do not show",
             "change": "the ENTRY says {what}, but CHANGE says {change}",
             "unsupported": "the book lines do not back this up: {what}",
-            "wiki": "{what}",
+            "kind": "{name} is not {wrong}: the series says {name} is {right}",
+            "kin": "{name} is not {who}'s {rel}",
+            "not": "{name} is not {who}: they are two different people",
         },
     },
     "fr": {
@@ -273,7 +275,9 @@ WORDS = {
             "event": "l'ENTRY dit {what}, ce que votre QUOTE et la fiche ne montrent pas",
             "change": "l'ENTRY dit {what}, mais CHANGE dit {change}",
             "unsupported": "les lignes du livre ne le disent pas : {what}",
-            "wiki": "{what}",
+            "kind": "{name} n'est pas {wrong} : la série dit que {name} est {right}",
+            "kin": "{name} n'a pas ce lien ({rel}) avec {who}",
+            "not": "{name} n'est pas {who} : ce sont deux personnes différentes",
         },
     },
 }
@@ -583,7 +587,8 @@ def problems(entry: str, quote: str, source: str, name_forms, others: dict,
     return out
 
 
-def _repaired(entry, quote, source, forms, others, words, before, change, allowed, reason):
+def _repaired(entry, quote, source, forms, others, words, before, change, allowed, reason,
+              backed=lambda rels: rels):
     """-> (entry, reasons): the entry cut down to the sentences that pass the
     checks on their own, when its problems are about what some sentence says
     rather than about the answer as a whole."""
@@ -597,7 +602,7 @@ def _repaired(entry, quote, source, forms, others, words, before, change, allowe
         bad = problems(x, quote, source, forms, {}, words, allowed=allowed)
         bad = [b for b in bad if b != say["short"]]
         bad += event_problems(x, quote, before, change, words)
-        if not bad and not unbacked_relations(x, source):
+        if not bad and not backed(unbacked_relations(x, source)):
             keep.append(x)
     kept = " ".join(keep)
     if len(kept.split()) < 4 or kept == entry:
@@ -641,6 +646,62 @@ def unbacked_relations(entry: str, source: str) -> list[tuple[str, str]]:
         if not any(near.search(line) for line in source.splitlines()):
             out.append((who, rel))
     return out
+
+
+def _kin_stems(rel: str) -> list[str]:
+    return _TIES.get(rel.lower(), [rel.lower()[:6]])
+
+
+def wiki_problems(entry: str, name: str, facts, words: dict) -> list[tuple[str, str]]:
+    """[(sentence, reason)] for what the series' facts list says is wrong:
+    what someone is (DCC 5 had Florin "human"), their kin, and who they are
+    not (Diwata "is Circe": she took over Circe's body). It only ever takes
+    away; a fact the list lacks is left to the book."""
+    who = facts.of(name) if facts else ""
+    if not who:
+        return []
+    say = words["problems"]
+    out = []
+    kinds = facts.kinds()
+    mine = facts.species.get(who, set())
+    for x in sentences(entry):
+        # what they are: only in the opening words, before "who", a comma...
+        if x is sentences(entry)[0] and mine:
+            head = re.split(r",|;| who | that | and | qui | et ", x, 1)[0].lower()
+            said = [k for k in kinds if re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(k), head)]
+            if said and not any(k in mine for k in said):
+                out.append((x, say["kind"].format(name=name, wrong=said[0],
+                                                  right=" / ".join(sorted(mine)))))
+                continue
+        bad = ""
+        claims = [(m.group(2), m.group(1)) for m in _REL_OF.finditer(x)] + \
+                 [(m.group(1), m.group(2)) for m in _REL_POSS.finditer(x)]
+        for other, rel in claims:
+            known = facts.tie(who, other)
+            if known and not any(s in t.lower() for t in known for s in _kin_stems(rel)):
+                bad = say["kin"].format(name=name, who=other, rel=rel)
+                break
+        if not bad:
+            for m in re.finditer(r"\b(?:is|was|est|était) (?:really |actually |secretly |in fact |"
+                                 r"en fait |vraiment )?(%s)" % _NAMEW, x):
+                other = facts.of(m.group(1))
+                if other and other != who and other in facts.nots.get(who, set()) | \
+                        {o for o, n in facts.nots.items() if who in n}:
+                    bad = say["not"].format(name=name, who=m.group(1))
+                    break
+        if bad:
+            out.append((x, bad))
+    return out
+
+
+def wiki_backed(rels, name: str, facts):
+    """Drop the ties the facts list confirms from unbacked_relations' list
+    (Bea is Carl's ex-girlfriend from book 1; book 5 doesn't say so again)."""
+    who = facts.of(name) if facts else ""
+    if not who:
+        return rels
+    return [(o, r) for o, r in rels
+            if not any(s in t.lower() for t in facts.tie(who, o) for s in _kin_stems(r))]
 
 
 # things that happen to someone, which an entry may only say with a quote
@@ -795,17 +856,26 @@ class Person:
 
 
 def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
-          lang: str = "en", view=None, title: str = "", workers: int = 1, names_list=None):
+          lang: str = "en", view=None, title: str = "", workers: int = 1, names_list=None,
+          facts=None, probe=None):
     """-> (people rows, report lines). Rows are
     (order, path, para, name, met|heard, times named so far, entry).
 
     names_list: the series' names list (series_memory.Names), which says
     which names are one person and which are not people. Names it settles
-    are not put to the model at all."""
+    are not put to the model at all.
+
+    facts: the series' facts list (series_memory.Facts), which catches an
+    entry that gets what someone is, their kin, or who they are wrong. It
+    never adds anything to an entry.
+
+    probe: known-mistake cases (tools/cast_mistakes.py) to put to the model
+    one at a time instead of the book: -> (entries, report, [])."""
     words = WORDS.get(lang, WORDS["en"])
     report: list[str] = []
     allowed = names_list.words() if names_list else set()
     trimmed = [0]
+    caught = [0]
     ctx.report("who's who: finding names")
     names = find_names(docs)
     remembered = set()
@@ -962,13 +1032,15 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                               allowed=allowed)
             if not (update and _same(entry)):
                 reason += event_problems(entry, quote, current_entry, change, words)
-                for who, rel in unbacked_relations(entry, source):
+                def backed(rels):
+                    return wiki_backed(rels, p.name, facts)
+                for who, rel in backed(unbacked_relations(entry, source)):
                     reason.append(words["problems"]["relation"].format(
                         who=who, rel=rel, name=p.name))
                 if attempt and reason and all(
                         r.startswith(words["problems"]["relation"][:20]) for r in reason):
                     # a good entry with one bad tie: keep it without that sentence
-                    bad = [w for w, _r in unbacked_relations(entry, source)]
+                    bad = [w for w, _r in backed(unbacked_relations(entry, source))]
                     kept = " ".join(x for x in _SENTENCE.split(entry)
                                     if not any(w in x for w in bad))
                     if len(kept.split()) >= 4:
@@ -977,7 +1049,23 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                     # still failing: keep the sentences that pass on their own
                     # (DCC 5 lost all of Cici for one half-name in one sentence)
                     entry, reason = _repaired(entry, quote, source, p.forms, others, words,
-                                              current_entry, change, allowed, reason)
+                                              current_entry, change, allowed, reason, backed)
+                if not reason:
+                    # the series' facts list: a wrong species, tie or identity
+                    # is asked again, and on the last try that sentence goes
+                    wrong = wiki_problems(entry, p.name, facts, words)
+                    if wrong and not attempt:
+                        reason = [r for _x, r in wrong]
+                        with lock:
+                            caught[0] += 1
+                        continue
+                    if wrong:
+                        kept = " ".join(x for x in sentences(entry)
+                                        if x not in {w for w, _r in wrong})
+                        if len(kept.split()) < 4:
+                            reason = [r for _x, r in wrong]
+                        else:
+                            entry = kept
             if not reason and not (update and _same(entry)):
                 # a second, strict question: does the book back each sentence?
                 with lock:
@@ -1020,6 +1108,20 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
         if entry and entry == p.entry:
             return status, ""
         return status, entry
+
+    if probe is not None:
+        got = []
+        for case in probe:
+            p = Person(case["name"], case.get("forms") or [case["name"]], True)
+            n = max(int(case.get("mentions") or 0), len(case["extracts"]))
+            p.mentions = [(0, "", i, "") for i in range(n)]
+            p.remembered = True
+            counts[p.name] = n
+            current_entry = case.get("current_entry") or ""
+            _status, entry = one_question(p, words["update" if current_entry else "intro"],
+                                          list(case["extracts"]), current_entry)
+            got.append(entry if entry is not None else None)
+        return got, report, []
 
     def write(p):
         first = p.mentions[0]
@@ -1122,6 +1224,8 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                   "%d questions, %d answers fixed on a second try" % (
                       len(shown), sum(1 for p in people if not p.rows),
                       sum(p.asked for p in people), sum(p.retried for p in people)))
+    report.append("%d entries cut to the sentences the book backs; %d caught by the "
+                  "series facts list" % (trimmed[0], caught[0]))
     lost = [p for p in people if not p.rows]
     if lost:
         report.append("left out: " + ", ".join(p.name for p in lost[:40]))
