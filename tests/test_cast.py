@@ -768,3 +768,24 @@ def test_a_sentence_kept_from_the_entry_so_far_is_not_checked_again():
         return model.complete(prompt, system).text
     got, _r, _s = C.build(M._Ctx(), [], ask, probe=cases)
     assert got and "left the party" in got[0]
+
+
+def test_also_known_as_is_an_identity_claim(tmp_path):
+    facts, words = _facts(tmp_path), C.WORDS["en"]
+    assert C.wiki_problems("A mantis queen. Also known as Diwata.", "Circe Took", facts, words)
+
+
+def test_the_sentence_check_sees_what_is_already_known():
+    from epubkit.tools import cast_mistakes as M
+    cases = [{"name": "Mordecai", "extracts": ["Mordecai mixed another potion in the guild hall."],
+              "current_entry": "The game guide who trains Carl in the guild hall."}]
+    prompts = []
+    model = Model(KINDS, {"Mordecai": ["The game guide who trains Carl. He mixed another potion."]})
+
+    def ask(prompt, system, usable):
+        prompts.append(prompt)
+        return model.complete(prompt, system).text
+    C.build(M._Ctx(), [], ask, probe=cases)
+    check = [x for x in prompts if "Sentences to check:" in x]
+    assert check and "Already known about Mordecai" in check[0]
+    assert "The game guide who trains Carl in the guild hall." in check[0]

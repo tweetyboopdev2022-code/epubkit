@@ -102,7 +102,7 @@ Answer in exactly four lines:
 CHANGE: one of none, joined, left, died, revealed, new role, other (joined = they joined or came back to a group or person; left = they left, were thrown out or went their own way)
 QUOTE: <copy a few words, exactly, from the extract that shows the change, or - if nothing changed>
 STATUS: met or heard (met = they have appeared in person by now; heard = so far they are only talked about)
-ENTRY: SAME if CHANGE is none; otherwise the whole entry again, at most two short sentences: who they are and what they are to the others, with the change. Drop older details that matter less rather than adding to the list.
+ENTRY: SAME if CHANGE is none; otherwise the whole entry again, at most two short sentences: who they are and what they are to the others, with the change. Always keep who they are and what they are to the main character; drop older details that matter less rather than adding to the list.
 
 Rules for ENTRY:
 - Only lasting facts that the extracts, the entry so far or the earlier books state outright. Not where they are or what they are doing in this scene.
@@ -117,12 +117,12 @@ VERIFY = """Check sentences about {name} against lines from the book "{title}".
 
 Lines from the book:
 {source}
-
+{already}
 Sentences to check:
 {sentences}
 
 For each sentence, answer on its own line with its number, YES or NO:
-YES only if the lines say it plainly (other words are fine).
+YES only if the lines, or what is already known, say it plainly (other words are fine).
 NO if any part of it is a guess, goes further than the lines, swaps who did what, gets a relationship wrong, or says someone joined when they left (or the other way round).
 Answer only the numbered lines."""
 
@@ -130,12 +130,12 @@ VERIFY_FR = """Vérifiez des phrases sur {name} à l'aide de lignes du livre « 
 
 Lignes du livre :
 {source}
-
+{already}
 Phrases à vérifier :
 {sentences}
 
 Pour chaque phrase, répondez sur sa propre ligne par son numéro, YES ou NO :
-YES seulement si les lignes le disent clairement (en d'autres mots, c'est bien).
+YES seulement si les lignes, ou ce qu'on sait déjà, le disent clairement (en d'autres mots, c'est bien).
 NO si une partie est une supposition, va plus loin que les lignes, inverse qui a fait quoi, se trompe de lien, ou dit qu'il a rejoint alors qu'il est parti (ou l'inverse).
 Répondez seulement par les lignes numérotées."""
 
@@ -204,7 +204,7 @@ Répondez en exactement quatre lignes :
 CHANGE: none, joined, left, died, revealed, new role ou other (joined = a rejoint ou retrouvé un groupe ; left = est parti, a été chassé)
 QUOTE: <recopiez exactement quelques mots de l'extrait qui montre le changement, ou ->
 STATUS: met ou heard
-ENTRY: SAME si rien de durable n'a changé ; sinon toute la fiche, en deux phrases courtes au plus, en français : qui c'est et ce qu'il est pour les autres, avec le changement. Retirez les détails anciens moins importants plutôt que d'allonger la liste.
+ENTRY: SAME si rien de durable n'a changé ; sinon toute la fiche, en deux phrases courtes au plus, en français : qui c'est et ce qu'il est pour les autres, avec le changement. Gardez toujours qui c'est et ce qu'il est pour le personnage principal ; retirez les détails anciens moins importants plutôt que d'allonger la liste.
 
 Règles pour ENTRY :
 - Seulement des faits durables, dits clairement par les extraits, la fiche ou les livres précédents. Pas où il est ni ce qu'il fait dans cette scène.
@@ -221,7 +221,8 @@ Répondez de nouveau de la même façon."""
 WORDS = {
     "en": {
         "system": SYSTEM, "sort": SORT, "intro": INTRO, "update": UPDATE, "again": AGAIN,
-        "verify": VERIFY, "checker": "You check facts strictly. You answer only YES or NO per line.",
+        "verify": VERIFY,
+        "already": "Already known about {name}, from earlier in the book or the series:\n{what}", "checker": "You check facts strictly. You answer only YES or NO per line.",
         "lead": "The story's main character is {hero}.",
         "first_person": "{hero} tells the story as \"I\": every \"I\" in the narration is {hero}.",
         "ensemble": "The story follows several main characters in turn.",
@@ -255,6 +256,7 @@ WORDS = {
     "fr": {
         "system": SYSTEM_FR, "sort": SORT_FR, "intro": INTRO_FR, "update": UPDATE_FR,
         "again": AGAIN_FR, "verify": VERIFY_FR,
+        "already": "Ce qu'on sait déjà de {name}, plus tôt dans le livre ou la série :\n{what}",
         "checker": "Vous vérifiez des faits avec rigueur. Vous répondez seulement YES ou NO par ligne.",
         "lead": "Le personnage principal de l'histoire est {hero}.",
         "first_person": "{hero} raconte l'histoire à la première personne : chaque « je » est {hero}.",
@@ -713,7 +715,8 @@ _IS_REALLY = re.compile(
     r"(?:(?:really|actually|secretly|truly|in fact|in truth|revealed (?:to be|as)|shown to be|"
     r"found to be|en fait|vraiment|en réalité)\b|(?-i:(?=[A-ZÀ-ÖØ-Þ])))|^(?:actually|revealed (?:to be|as))\b|"
     r"\b(?:turns|turned) out to be\b|\bis none other than\b|\b(?:secret|true|real) identity\b|"
-    r"\bdisguised as\b|\bse révèle être\b)")
+    r"\bdisguised as\b|\bse révèle être\b|\b(?:also )?known as\b|\baka\b|\balso called\b|"
+    r"\bgoes by\b|\balias\b|\bconnu(?:e)? sous le nom\b)")
 
 
 def _before_identity(sentence: str) -> str:
@@ -779,15 +782,21 @@ def sentences(entry: str) -> list[str]:
 _VERDICT = re.compile(r"(?im)^\W*(\d+)\W+(yes|no|oui|non)\b")
 
 
-def unsupported(ask, words: dict, name: str, title: str, source: str, entry: str) -> list[str]:
+def unsupported(ask, words: dict, name: str, title: str, source: str, entry: str,
+                already: str = "") -> list[str]:
     """The sentences of an entry that a second, strict question says the book
     lines do not back up. An answer that cannot be read backs everything:
-    this check only ever takes away."""
+    this check only ever takes away.
+
+    already: the entry so far and what the earlier books said, which an
+    update may say again in other words (round 9 lost Mordecai's "game
+    guide" and Katia's leaving when the checker saw only the new lines)."""
     said = sentences(entry)
     if not said:
         return []
     prompt = words["verify"].format(
         name=name, title=title, source=source,
+        already=("\n" + words["already"].format(name=name, what=already) + "\n") if already else "",
         sentences="\n".join("%d. %s" % (i + 1, x) for i, x in enumerate(said)))
     try:
         reply = ask(prompt, words["checker"], lambda t: bool(_VERDICT.search(t or "")))
@@ -1131,7 +1140,8 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 # a second, strict question: does the book back each sentence?
                 with lock:
                     p.asked += 1
-                bad = unsupported(ask, words, p.name, title, source, entry)
+                bad = unsupported(ask, words, p.name, title, "\n".join(extracts + about),
+                                  entry, "\n".join(x for x in (current_entry, known) if x))
                 # a sentence kept word for word from the entry so far passed
                 # its checks when it was written (round 13 lost Katia's "has
                 # left the party" here, one run in two)
