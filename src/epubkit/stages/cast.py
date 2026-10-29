@@ -682,16 +682,28 @@ def wiki_problems(entry: str, name: str, facts, words: dict) -> list[tuple[str, 
                 bad = say["kin"].format(name=name, who=other, rel=rel)
                 break
         if not bad:
-            for m in re.finditer(r"\b(?:is|was|est|était) (?:really |actually |secretly |in fact |"
-                                 r"en fait |vraiment )?(%s)" % _NAMEW, x):
-                other = facts.of(m.group(1))
-                if other and other != who and other in facts.nots.get(who, set()) | \
-                        {o for o, n in facts.nots.items() if who in n}:
-                    bad = say["not"].format(name=name, who=m.group(1))
+            # "is actually Circe", "is revealed to be the human Circe Took",
+            # "is actually a mantis named Circe Took" (DCC 5, round 8)
+            nots = facts.nots.get(who, set()) | {o for o, n in facts.nots.items() if who in n}
+            m = _IS_REALLY.search(x)
+            rest = x[m.end():] if m else ""
+            for other in sorted(nots) if rest else ():
+                forms = [f for f, o in facts.owner.items() if o == other] + [other.lower()]
+                if any(re.search(r"(?<![\w])%s(?![\w])" % re.escape(f), rest.lower())
+                       for f in forms):
+                    bad = say["not"].format(name=name, who=other)
                     break
         if bad:
             out.append((x, bad))
     return out
+
+
+_IS_REALLY = re.compile(
+    r"(?i)(?:\b(?:she|he|they|who|il|elle|ils|elles|qui)\s+(?:is|was|are|were|est|était|sont)\s+"
+    r"(?:(?:really|actually|secretly|truly|in fact|in truth|revealed (?:to be|as)|shown to be|"
+    r"found to be|en fait|vraiment|en réalité)\b|(?-i:(?=[A-ZÀ-ÖØ-Þ])))|^(?:actually|revealed (?:to be|as))\b|"
+    r"\b(?:turns|turned) out to be\b|\bis none other than\b|\b(?:secret|true|real) identity\b|"
+    r"\bdisguised as\b|\bse révèle être\b)")
 
 
 def wiki_backed(rels, name: str, facts):
@@ -853,6 +865,7 @@ class Person:
         self.spoke = None               # (order, path, para) first heard speaking
         self.alias_of = ""              # the entry said this is someone else
         self.why = ""                   # why the last answer failed its checks
+        self.history: list[str] = []    # every failed answer and why, for tools/cast_mistakes
 
 
 def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
@@ -993,7 +1006,11 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
         source = "\n".join(extracts + [known, current_entry] + about)
         update = bool(current_entry)
         reason = []
+        got, reply = None, ""
         for attempt in range(2):
+            if attempt:
+                p.history.append("1st answer: %s\n    why: %s" % (
+                    (got[2] if got else (reply or "")[:200]), "; ".join(reason)))
             text = prompt + (words["again"].format(problems="\n".join("- " + r for r in reason))
                              if attempt else "")
             p.asked += 1
@@ -1090,6 +1107,8 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 return status, entry
         p.failed += 1
         p.why = "; ".join(reason)[:120]
+        p.history.append("2nd answer: %s\n    why: %s" % (
+            (got[2] if got else (reply or "")[:200]), "; ".join(reason)))
         ctx.log.debug("    who's who: %s left out: %s", p.name, "; ".join(reason))
         return "", None
 
@@ -1121,6 +1140,7 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
             _status, entry = one_question(p, words["update" if current_entry else "intro"],
                                           list(case["extracts"]), current_entry)
             got.append(entry if entry is not None else None)
+            report.append("%s: %s" % (p.name, "\n  ".join(p.history) or "first answer passed"))
         return got, report, []
 
     def write(p):

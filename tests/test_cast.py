@@ -681,3 +681,14 @@ def test_known_mistakes_can_be_put_to_the_model_without_the_book(tmp_path):
     assert [M.score(c, e)[0] for c, e in zip(cases, got)] == ["right", "right"]
     assert M.score(cases[0], "A human crawler.")[0] == "wrong"
     assert M.score(cases[0], None)[0] == "lost"
+
+
+def test_the_facts_list_catches_a_hidden_identity_however_it_is_put(tmp_path):
+    facts, words = _facts(tmp_path), C.WORDS["en"]
+    for wrong in ("A hive queen. She is actually a mantis named Circe Took.",
+                  "A crawler; she is revealed to be the human Circe Took.",
+                  "A crawler who turns out to be Circe Took."):
+        assert C.wiki_problems(wrong, "Diwata", facts, words), wrong
+    for fine in ("A crawler whose sponsor is Circe Took.",
+                 "A crawler. She is angry at Circe Took."):
+        assert not C.wiki_problems(fine, "Diwata", facts, words), fine

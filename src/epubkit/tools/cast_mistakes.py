@@ -108,7 +108,7 @@ def main(argv=None) -> int:
     results = []
     tally: dict[str, int] = {}
     for run in range(args.runs):
-        entries, _report, _ = cast.build(
+        entries, report, _ = cast.build(
             _Ctx(), [], ask, lang=args.lang, view=view, title=args.title or args.series,
             names_list=names_list, facts=facts, probe=cases)
         for case, entry in zip(cases, entries):
@@ -121,6 +121,10 @@ def main(argv=None) -> int:
                 print("       still says: %s" % "; ".join(wrong))
             if missing:
                 print("       missing: %s" % "; ".join(missing))
+        print("\nwhat the checks turned down, run %d:" % (run + 1))
+        for line in report:
+            print("  " + line)
+        print()
     print("\n" + ", ".join("%d %s" % (n, v) for v, n in sorted(tally.items())))
     if args.json:
         Path(args.json).write_text(json.dumps(results, indent=1, ensure_ascii=False),
