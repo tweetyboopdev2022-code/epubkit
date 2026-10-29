@@ -89,6 +89,14 @@ def main(argv=None) -> int:
     print("%d cases; memory %d people, names list %d, facts list %d people"
           % (len(cases), len(view.people), len(names_list.owner), len(facts.owner)))
 
+    try:
+        provider.complete("Say OK.", None, retries=1)
+    except Exception as exc:                                # noqa: BLE001
+        print("the model can't be reached: %s" % exc)
+        if not cfg.ai.api_key():
+            print("(no API key set: export OPENAI_API_KEY first)")
+        return 2
+
     def ask(prompt, system, usable):
         text = ""
         for _ in range(2):
