@@ -798,3 +798,8 @@ def test_a_title_and_an_initial_is_not_a_name():
     names = C.find_names(docs)
     assert not any(n.startswith("Mr. H") and len(n.split()) == 2 and len(n.split()[1].rstrip(".")) == 1
                    for n in names)
+
+
+def test_a_sentence_does_not_end_at_mr():
+    assert C.sentences("Referred to as You-Know-Who by Mr. Dursley. He fears him.") == \
+        ["Referred to as You-Know-Who by Mr. Dursley.", "He fears him."]

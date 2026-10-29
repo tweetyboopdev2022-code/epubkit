@@ -750,3 +750,11 @@ def test_a_bundled_preview_of_the_next_book_is_not_read():
     assert _story_end(plain) == 19
     assert _PREVIEW.search("turn the page for a sneak peek at the next book")
     assert not _PREVIEW.search("harry read on for hours, then turned the page")
+
+
+def test_numbered_file_names_are_not_another_book():
+    from epubkit.stages.recaps import _story_end
+    calibre = ["OEBPS/part%04d_split_%03d.xhtml" % (i // 4, i % 4) for i in range(98)]
+    assert _story_end(calibre) == 97
+    circe = ["OEBPS/s%03d-chapter.xhtml" % i for i in range(36)]
+    assert _story_end(circe) == 35

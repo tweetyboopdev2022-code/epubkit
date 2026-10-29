@@ -1336,6 +1336,10 @@ def _story_end(spine: list[str]) -> int:
     if len(known) < max(4, len(spine) // 2):
         return len(spine) - 1
     main = max(set(known), key=known.count)
+    # a book code ("hp01", "b1"), not a running number ("part0000",
+    # "s021"): Calibre's numbered files once cut DCC 5 off at its 4th file
+    if known.count(main) < len(spine) // 2 or len(re.sub(r"\D", "", main)) > 3:
+        return len(spine) - 1
     last = max(i for i, k in enumerate(keys) if k == main)
     # only cut when what follows is another book's files, not plain back matter
     if any(k and k != main for k in keys[last + 1:]):

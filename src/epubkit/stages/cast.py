@@ -497,7 +497,25 @@ SCENE = re.compile(r"(?i)\b(?:currently|right now|at the moment|at present|for n
                    r"in this scene|(?:is|are) (?:scheduled|due|set) to|is about to|"
                    r"actuellement|en ce moment|pour l['’]instant|(?:est|sont) prévue?s? pour)\b")
 KIND = re.compile(r"(?im)^[^\w\n]*kind[^\w\n]*:?[ \t]*(.*)$")
-_SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-ZÀ-Þ\"“«])")
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-ZÀ-Þ\"“«])")
+_ABBREV = re.compile(r"(?:^|\s)(?:Mr|Mrs|Ms|Dr|St|Mt|Prof|Sgt|Capt|Lt|Col|Gen|Jr|Sr|M|Mme|Mlle)\.$")
+
+
+class _Sentences:
+    """Splits after . ! ? but not after "Mr." or "Dr.": Harry Potter 1's
+    Voldemort entry was cut to "Referred to as You-Know-Who by Mr."."""
+
+    def split(self, text: str) -> list[str]:
+        out: list[str] = []
+        for piece in _SENTENCE_END.split(text):
+            if out and _ABBREV.search(out[-1]):
+                out[-1] += " " + piece
+            else:
+                out.append(piece)
+        return out
+
+
+_SENTENCE = _Sentences()
 _STOP = set("""
 the and was that his her with for had not but you she they said have from this
 were been their them what when who will would could there about which after into
