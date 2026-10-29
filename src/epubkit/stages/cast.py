@@ -245,9 +245,11 @@ WORDS = {
             "event": "the ENTRY says {what}, which your QUOTE and the entry so far do not show",
             "change": "the ENTRY says {what}, but CHANGE says {change}",
             "unsupported": "the book lines do not back this up: {what}",
-            "kind": "{name} is not {wrong}: the series says {name} is {right}",
-            "kin": "{name} is not {who}'s {rel}",
-            "not": "{name} is not {who}: they are two different people",
+            "kind": "{name} is not {wrong}: the series says {name} is {right}. Change only that "
+                    "and keep the rest of the entry as it was",
+            "kin": "{name} is not {who}'s {rel}. Change only that and keep the rest of the entry",
+            "not": "{name} is not {who}: they are two different people. Change only that and "
+                   "keep the rest of the entry",
         },
     },
     "fr": {
@@ -277,9 +279,12 @@ WORDS = {
             "event": "l'ENTRY dit {what}, ce que votre QUOTE et la fiche ne montrent pas",
             "change": "l'ENTRY dit {what}, mais CHANGE dit {change}",
             "unsupported": "les lignes du livre ne le disent pas : {what}",
-            "kind": "{name} n'est pas {wrong} : la série dit que {name} est {right}",
-            "kin": "{name} n'a pas ce lien ({rel}) avec {who}",
-            "not": "{name} n'est pas {who} : ce sont deux personnes différentes",
+            "kind": "{name} n'est pas {wrong} : la série dit que {name} est {right}. Ne changez "
+                    "que cela et gardez le reste de la fiche",
+            "kin": "{name} n'a pas ce lien ({rel}) avec {who}. Ne changez que cela et gardez le "
+                   "reste de la fiche",
+            "not": "{name} n'est pas {who} : ce sont deux personnes différentes. Ne changez que "
+                   "cela et gardez le reste de la fiche",
         },
     },
 }
@@ -461,8 +466,9 @@ LEAK = re.compile(
 # a scene, not who someone is: Carl was "in the vice principal's office with
 # a companion" for the whole of DCC 5
 SCENE = re.compile(r"(?i)\b(?:currently|right now|at the moment|at present|for now|"
-                   r"in this scene|actuellement|en ce moment|pour l['’]instant)\b")
-KIND = re.compile(r"(?im)^\W*kind\W*:?\s*(.*)$")
+                   r"in this scene|(?:is|are) (?:scheduled|due|set) to|is about to|"
+                   r"actuellement|en ce moment|pour l['’]instant|(?:est|sont) prévue?s? pour)\b")
+KIND = re.compile(r"(?im)^[^\w\n]*kind[^\w\n]*:?[ \t]*(.*)$")
 _SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-ZÀ-Þ\"“«])")
 _STOP = set("""
 the and was that his her with for had not but you she they said have from this
@@ -1126,6 +1132,8 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 with lock:
                     p.asked += 1
                 bad = unsupported(ask, words, p.name, title, source, entry)
+                p.history.append("sentence check on: %s\n    said NO to: %s" % (
+                    entry, " / ".join(bad) or "nothing"))
                 if bad:
                     kept = " ".join(x for x in sentences(entry) if x not in bad)
                     if len(kept.split()) >= 4:
