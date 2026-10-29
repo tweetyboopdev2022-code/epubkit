@@ -80,7 +80,7 @@ ENTRY: <one or two short sentences saying who {name} is and why they matter to t
 Rules for ENTRY:
 - Only lasting facts that the extracts or the earlier books state outright: what they are, their role, and who they are to the people around them. Not where they are or what they are doing in this scene.
 - When an extract is someone speaking, "I", "me" and "my" are the speaker, not {name}. Name a relationship (brother, owner, partner, boss) only if an extract says it in so many words.
-- If the extracts say little about {name}, the ENTRY says only that little: who mentions them and what for. Never fill it in from anything you may know about this book or series; a short true entry is right, a full one with a guess in it is wrong.
+- If the extracts, and what the earlier books said, tell little about {name}, the ENTRY says only that little: who mentions them and what for. What the earlier books said counts; never fill it in from anything else you may know about this book or series. A short true entry is right, a full one with a guess in it is wrong.
 - A god or spirit who takes over someone's body, or wears their face, is not that person: say whose body or face, never that they are them.
 - Leave out spells, skills, items and levels unless they are what the person is known for.
 - Never write "the main character", "the narrator", "the speaker", "the protagonist", "currently", "not yet connected", or anything about "the extracts", "the passage" or "the reader".
@@ -181,7 +181,7 @@ ENTRY: <une ou deux phrases courtes, en français, qui disent qui est {name} et 
 
 Règles pour ENTRY :
 - Seulement ce que disent les extraits ou les livres précédents. Aucune supposition, rien de la suite.
-- Si les extraits disent peu de chose de {name}, l'ENTRY ne dit que ce peu. Ne complétez jamais avec ce que vous savez peut-être de ce livre ou de cette série.
+- Si les extraits, et ce que disaient les livres précédents, disent peu de chose de {name}, l'ENTRY ne dit que ce peu. Ce que disaient les livres précédents compte ; ne complétez jamais avec autre chose que vous savez peut-être de ce livre ou de cette série.
 - Un dieu ou un esprit qui prend le corps ou le visage de quelqu'un n'est pas cette personne : dites à qui est ce corps ou ce visage, jamais qu'il est cette personne.
 - Seulement des faits durables, dits clairement : ce qu'il est, son rôle, ce qu'il est pour les autres. Pas où il est ni ce qu'il fait dans cette scène.
 - Quand un extrait fait parler quelqu'un, « je » et « mon » sont celui qui parle, pas {name}. Ne citez un lien (frère, maître, associé) que si un extrait le dit en toutes lettres.
