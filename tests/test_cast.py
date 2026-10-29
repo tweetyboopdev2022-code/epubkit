@@ -754,3 +754,17 @@ def test_a_wrong_identity_is_cut_off_and_the_rest_kept():
 def test_an_empty_quote_line_never_takes_the_next_line():
     assert C.parse_entry("CHANGE: other\nQUOTE:\nSTATUS: met\nENTRY: A doppelganger.") == \
         ("", "met", "A doppelganger.")
+
+
+def test_a_sentence_kept_from_the_entry_so_far_is_not_checked_again():
+    from epubkit.tools import cast_mistakes as M
+    old = "A crawler and Hekla's friend. She has left the party."
+    cases = [{"name": "Katia", "extracts": ["Katia smiled at Donut in the room."],
+              "current_entry": old}]
+    model = Model(KINDS, {"Katia": ["A crawler who smiled at Donut in the room. "
+                                    "She has left the party."]}, untrue=("left the party",))
+
+    def ask(prompt, system, usable):
+        return model.complete(prompt, system).text
+    got, _r, _s = C.build(M._Ctx(), [], ask, probe=cases)
+    assert got and "left the party" in got[0]

@@ -1132,6 +1132,11 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 with lock:
                     p.asked += 1
                 bad = unsupported(ask, words, p.name, title, source, entry)
+                # a sentence kept word for word from the entry so far passed
+                # its checks when it was written (round 13 lost Katia's "has
+                # left the party" here, one run in two)
+                had = _plain(current_entry)
+                bad = [x for x in bad if not (had and _plain(x) and _plain(x) in had)]
                 p.history.append("sentence check on: %s\n    said NO to: %s" % (
                     entry, " / ".join(bad) or "nothing"))
                 if bad:
