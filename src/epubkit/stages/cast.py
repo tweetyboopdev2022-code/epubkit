@@ -80,6 +80,7 @@ ENTRY: <one or two short sentences saying who {name} is and why they matter to t
 Rules for ENTRY:
 - Only lasting facts that the extracts or the earlier books state outright: what they are, their role, and who they are to the people around them. Not where they are or what they are doing in this scene.
 - When an extract is someone speaking, "I", "me" and "my" are the speaker, not {name}. Name a relationship (brother, owner, partner, boss) only if an extract says it in so many words.
+- If the extracts say little about {name}, the ENTRY says only that little: who mentions them and what for. Never fill it in from anything you may know about this book or series; a short true entry is right, a full one with a guess in it is wrong.
 - Leave out spells, skills, items and levels unless they are what the person is known for.
 - Never write "the main character", "the narrator", "the speaker", "the protagonist", "currently", "not yet connected", or anything about "the extracts", "the passage" or "the reader".
 - Do not start with their name."""
@@ -96,18 +97,46 @@ What the book has said about them since, in order:
 
 Has anything lasting changed about who {name} is: a new role, class or title, a new relationship, something revealed, a change in what they are, joining or leaving a group, or their death? A single scene is not a change; a death always is.
 
-Answer in exactly three lines:
+Answer in exactly four lines:
+CHANGE: one of none, joined, left, died, revealed, new role, other (joined = they joined or came back to a group or person; left = they left, were thrown out or went their own way)
 QUOTE: <copy a few words, exactly, from the extract that shows the change, or - if nothing changed>
 STATUS: met or heard (met = they have appeared in person by now; heard = so far they are only talked about)
-ENTRY: SAME if nothing lasting changed; otherwise the whole entry again, at most two short sentences: who they are and what they are to the others, with the change. Drop older details that matter less rather than adding to the list.
+ENTRY: SAME if CHANGE is none; otherwise the whole entry again, at most two short sentences: who they are and what they are to the others, with the change. Drop older details that matter less rather than adding to the list.
 
 Rules for ENTRY:
 - Only lasting facts that the extracts, the entry so far or the earlier books state outright. Not where they are or what they are doing in this scene.
 - When an extract is someone speaking, "I", "me" and "my" are the speaker, not {name}.
 - If the extracts show that something in the entry so far is wrong, write the whole entry again without it.
+- The ENTRY must say the same change as CHANGE: someone who left has not rejoined, and someone who takes over another's body is not that other person.
 - Leave out spells, skills, items and levels unless they are what the person is known for.
 - Never write "the main character", "the narrator", "the speaker", "the protagonist", "currently", "not yet connected", or anything about "the extracts", "the passage" or "the reader".
 - Do not start with their name."""
+
+VERIFY = """Check sentences about {name} against lines from the book "{title}".
+
+Lines from the book:
+{source}
+
+Sentences to check:
+{sentences}
+
+For each sentence, answer on its own line with its number, YES or NO:
+YES only if the lines say it plainly (other words are fine).
+NO if any part of it is a guess, goes further than the lines, swaps who did what, gets a relationship wrong, or says someone joined when they left (or the other way round).
+Answer only the numbered lines."""
+
+VERIFY_FR = """Vérifiez des phrases sur {name} à l'aide de lignes du livre « {title} ».
+
+Lignes du livre :
+{source}
+
+Phrases à vérifier :
+{sentences}
+
+Pour chaque phrase, répondez sur sa propre ligne par son numéro, YES ou NO :
+YES seulement si les lignes le disent clairement (en d'autres mots, c'est bien).
+NO si une partie est une supposition, va plus loin que les lignes, inverse qui a fait quoi, se trompe de lien, ou dit qu'il a rejoint alors qu'il est parti (ou l'inverse).
+Répondez seulement par les lignes numérotées."""
 
 AGAIN = """
 
@@ -151,6 +180,7 @@ ENTRY: <une ou deux phrases courtes, en français, qui disent qui est {name} et 
 
 Règles pour ENTRY :
 - Seulement ce que disent les extraits ou les livres précédents. Aucune supposition, rien de la suite.
+- Si les extraits disent peu de chose de {name}, l'ENTRY ne dit que ce peu. Ne complétez jamais avec ce que vous savez peut-être de ce livre ou de cette série.
 - Seulement des faits durables, dits clairement : ce qu'il est, son rôle, ce qu'il est pour les autres. Pas où il est ni ce qu'il fait dans cette scène.
 - Quand un extrait fait parler quelqu'un, « je » et « mon » sont celui qui parle, pas {name}. Ne citez un lien (frère, maître, associé) que si un extrait le dit en toutes lettres.
 - N'écrivez jamais « le personnage principal », « le narrateur », « actuellement », « pas encore lié », ni rien sur « les extraits », « le passage » ou « le lecteur ».
@@ -168,7 +198,8 @@ Ce que le livre a dit de ce personnage depuis, dans l'ordre :
 
 Quelque chose de durable a-t-il changé : un nouveau rôle, une nouvelle classe ou un nouveau titre, un nouveau lien, une révélation, un changement de nature, un départ ou une arrivée dans un groupe, ou sa mort ? Une seule scène n'est pas un changement ; une mort l'est toujours.
 
-Répondez en exactement trois lignes :
+Répondez en exactement quatre lignes :
+CHANGE: none, joined, left, died, revealed, new role ou other (joined = a rejoint ou retrouvé un groupe ; left = est parti, a été chassé)
 QUOTE: <recopiez exactement quelques mots de l'extrait qui montre le changement, ou ->
 STATUS: met ou heard
 ENTRY: SAME si rien de durable n'a changé ; sinon toute la fiche, en deux phrases courtes au plus, en français : qui c'est et ce qu'il est pour les autres, avec le changement. Retirez les détails anciens moins importants plutôt que d'allonger la liste.
@@ -188,6 +219,7 @@ Répondez de nouveau de la même façon."""
 WORDS = {
     "en": {
         "system": SYSTEM, "sort": SORT, "intro": INTRO, "update": UPDATE, "again": AGAIN,
+        "verify": VERIFY, "checker": "You check facts strictly. You answer only YES or NO per line.",
         "lead": "The story's main character is {hero}.",
         "first_person": "{hero} tells the story as \"I\": every \"I\" in the narration is {hero}.",
         "ensemble": "The story follows several main characters in turn.",
@@ -208,11 +240,16 @@ WORDS = {
             "relation": "the extracts never say {who} is anyone's {rel} near this person: "
                         "a relationship must be one the extracts state about {name}",
             "scene": "the ENTRY says where they are or what they are doing now; say who they are",
+            "event": "the ENTRY says {what}, which your QUOTE and the entry so far do not show",
+            "change": "the ENTRY says {what}, but CHANGE says {change}",
+            "unsupported": "the book lines do not back this up: {what}",
+            "wiki": "{what}",
         },
     },
     "fr": {
         "system": SYSTEM_FR, "sort": SORT_FR, "intro": INTRO_FR, "update": UPDATE_FR,
-        "again": AGAIN_FR,
+        "again": AGAIN_FR, "verify": VERIFY_FR,
+        "checker": "Vous vérifiez des faits avec rigueur. Vous répondez seulement YES ou NO par ligne.",
         "lead": "Le personnage principal de l'histoire est {hero}.",
         "first_person": "{hero} raconte l'histoire à la première personne : chaque « je » est {hero}.",
         "ensemble": "L'histoire suit tour à tour plusieurs personnages principaux.",
@@ -233,6 +270,10 @@ WORDS = {
             "relation": "les extraits ne disent jamais que {who} a ce lien ({rel}) ici : "
                         "un lien doit être dit par les extraits à propos de {name}",
             "scene": "l'ENTRY dit où il est ou ce qu'il fait maintenant ; dites qui c'est",
+            "event": "l'ENTRY dit {what}, ce que votre QUOTE et la fiche ne montrent pas",
+            "change": "l'ENTRY dit {what}, mais CHANGE dit {change}",
+            "unsupported": "les lignes du livre ne le disent pas : {what}",
+            "wiki": "{what}",
         },
     },
 }
@@ -252,6 +293,9 @@ SORT_BATCH = 30
 OFTEN = 10
 #: at most this many words in an entry
 MAX_WORDS = 40
+#: a main or supporting person's entry is written afresh from everything the
+#: book has said about them this often (in checkpoints), and once at the end
+REWRITE_EVERY = 8
 
 # ------------------------------------------------------------------ names
 
@@ -481,11 +525,13 @@ def _trim(entry: str) -> str:
 
 
 def problems(entry: str, quote: str, source: str, name_forms, others: dict,
-             words: dict, same_ok: bool = False) -> list[str]:
+             words: dict, same_ok: bool = False, allowed=()) -> list[str]:
     """What is wrong with an entry, as the reasons to give the model. [] = fine.
 
     source: the extracts and what the earlier books said - everything the
     entry may draw on. others: the entries other people already have.
+    allowed: words of names the series' names list knows, which may be used
+    even when the extracts carry only part of the name.
     """
     say = words["problems"]
     if not entry:
@@ -511,7 +557,7 @@ def problems(entry: str, quote: str, source: str, name_forms, others: dict,
     if n_words < 4:
         out.append(say["short"])
     # every proper name and number must come from what it was written from
-    have = set(re.findall(r"[\w'’\-]+", source))
+    have = set(re.findall(r"[\w'’\-]+", source)) | set(allowed)
     mine = {w for f in name_forms for w in re.findall(r"[\w'’\-]+", f)}
     missing = []
     for i, w in enumerate(re.findall(r"[\w'’\-]+", entry)):
@@ -535,6 +581,29 @@ def problems(entry: str, quote: str, source: str, name_forms, others: dict,
             out.append(say["theirs"].format(who=who))
             break
     return out
+
+
+def _repaired(entry, quote, source, forms, others, words, before, change, allowed, reason):
+    """-> (entry, reasons): the entry cut down to the sentences that pass the
+    checks on their own, when its problems are about what some sentence says
+    rather than about the answer as a whole."""
+    say = words["problems"]
+    # these are about the answer as a whole: no one sentence can be kept
+    whole = {say["shape"], say["quote"], say["leak"]}
+    if any(r in whole or r.startswith(say["theirs"].split("{")[0]) for r in reason):
+        return entry, reason
+    keep = []
+    for x in sentences(entry):
+        bad = problems(x, quote, source, forms, {}, words, allowed=allowed)
+        bad = [b for b in bad if b != say["short"]]
+        bad += event_problems(x, quote, before, change, words)
+        if not bad and not unbacked_relations(x, source):
+            keep.append(x)
+    kept = " ".join(keep)
+    if len(kept.split()) < 4 or kept == entry:
+        return entry, reason
+    again = problems(kept, quote, source, forms, others, words, allowed=allowed)
+    return (kept, []) if not again else (entry, reason)
 
 
 # family and ties: DCC 5 had Circe as "the mother of Donut" (she is Vrah's)
@@ -571,6 +640,69 @@ def unbacked_relations(entry: str, source: str) -> list[tuple[str, str]]:
             re.escape(who), stems, stems, re.escape(who)))
         if not any(near.search(line) for line in source.splitlines()):
             out.append((who, rel))
+    return out
+
+
+# things that happen to someone, which an entry may only say with a quote
+# that shows them: DCC 5 had Katia "rejoined the party" as she left it
+EVENTS = {
+    "joined": re.compile(r"(?i)\b(?:re-?)?join(?:s|ed|ing)?\b|\bcame back\b|\breturn(?:s|ed)?\b|"
+                         r"\breunit(?:e|es|ed)\b|\brejoint|\brevenu"),
+    "left": re.compile(r"(?i)\bleft (?:the|her|his|their|them|him)\b|\bleaves\b|\bquit(?:s)?\b|"
+                       r"\babandon(?:s|ed)?\b|\b(?:thrown|kicked) out\b|\bwent (?:her|his|their) own way\b|"
+                       r"\bparti[e]?s?\b|\bquitt[ée]"),
+    "died": re.compile(r"(?i)\bdie[sd]\b|\bdead\b|\bkilled\b|\bmurdered\b|\bmort[e]?s?\b|\btu[ée]e?\b"),
+}
+CHANGE = re.compile(r"(?im)^\W*change\W*:?\s*([\w ]+)")
+
+
+def parse_change(text: str) -> str:
+    m = CHANGE.search(text or "")
+    return m.group(1).strip().lower() if m else ""
+
+
+def event_problems(entry: str, quote: str, before: str, change: str, words: dict) -> list[str]:
+    """An entry that says someone joined, left or died must have the quote to
+    show it (or have said it already), and must agree with its CHANGE line."""
+    say = words["problems"]
+    out = []
+    for kind, pat in EVENTS.items():
+        m = pat.search(entry)
+        if not m or pat.search(before or ""):
+            continue
+        if not pat.search(quote or ""):
+            out.append(say["event"].format(what='"%s"' % m.group(0)))
+        if change in EVENTS and change != kind:
+            out.append(say["change"].format(what='"%s"' % m.group(0), change=change))
+    return out
+
+
+def sentences(entry: str) -> list[str]:
+    return [x.strip() for x in _SENTENCE.split(entry or "") if x.strip()]
+
+
+_VERDICT = re.compile(r"(?im)^\W*(\d+)\W+(yes|no|oui|non)\b")
+
+
+def unsupported(ask, words: dict, name: str, title: str, source: str, entry: str) -> list[str]:
+    """The sentences of an entry that a second, strict question says the book
+    lines do not back up. An answer that cannot be read backs everything:
+    this check only ever takes away."""
+    said = sentences(entry)
+    if not said:
+        return []
+    prompt = words["verify"].format(
+        name=name, title=title, source=source,
+        sentences="\n".join("%d. %s" % (i + 1, x) for i, x in enumerate(said)))
+    try:
+        reply = ask(prompt, words["checker"], lambda t: bool(_VERDICT.search(t or "")))
+    except Exception:                                       # noqa: BLE001
+        return []
+    out = []
+    for m in _VERDICT.finditer(reply or ""):
+        i = int(m.group(1)) - 1
+        if 0 <= i < len(said) and m.group(2).lower() in ("no", "non") and said[i] not in out:
+            out.append(said[i])
     return out
 
 
@@ -672,6 +804,8 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
     are not put to the model at all."""
     words = WORDS.get(lang, WORDS["en"])
     report: list[str] = []
+    allowed = names_list.words() if names_list else set()
+    trimmed = [0]
     ctx.report("who's who: finding names")
     names = find_names(docs)
     remembered = set()
@@ -802,6 +936,7 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 reason = [words["problems"]["shape"]]
                 continue
             quote, status, entry = got
+            change = parse_change(reply) if update else ""
             if entry == "-" and not quote and not update:
                 # Only a rare name is dropped on this say-so. Round two of
                 # the DCC pilot lost Mordecai from books 3 and 4 this way
@@ -823,8 +958,10 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
             entry = _trim(_unnamed(entry, p.forms))
             with lock:
                 others = {w: e for w, e in current.items() if w != p.name}
-            reason = problems(entry, quote, source, p.forms, others, words, same_ok=update)
+            reason = problems(entry, quote, source, p.forms, others, words, same_ok=update,
+                              allowed=allowed)
             if not (update and _same(entry)):
+                reason += event_problems(entry, quote, current_entry, change, words)
                 for who, rel in unbacked_relations(entry, source):
                     reason.append(words["problems"]["relation"].format(
                         who=who, rel=rel, name=p.name))
@@ -836,6 +973,27 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                                     if not any(w in x for w in bad))
                     if len(kept.split()) >= 4:
                         entry, reason = kept, []
+                if attempt and reason:
+                    # still failing: keep the sentences that pass on their own
+                    # (DCC 5 lost all of Cici for one half-name in one sentence)
+                    entry, reason = _repaired(entry, quote, source, p.forms, others, words,
+                                              current_entry, change, allowed, reason)
+            if not reason and not (update and _same(entry)):
+                # a second, strict question: does the book back each sentence?
+                with lock:
+                    p.asked += 1
+                bad = unsupported(ask, words, p.name, title, source, entry)
+                if bad:
+                    kept = " ".join(x for x in sentences(entry) if x not in bad)
+                    if len(kept.split()) >= 4:
+                        entry = kept
+                        with lock:
+                            trimmed[0] += 1
+                    elif update and not kept.strip():
+                        return status, ""           # nothing new it can back: same as before
+                    else:
+                        reason = [words["problems"]["unsupported"].format(what=" / ".join(bad))]
+                        continue
             if not reason:
                 if attempt:
                     p.retried += 1
@@ -846,6 +1004,22 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
         p.why = "; ".join(reason)[:120]
         ctx.log.debug("    who's who: %s left out: %s", p.name, "; ".join(reason))
         return "", None
+
+    def rewrite(p, upto):
+        """A whole new entry from mentions spread over the book so far, ending
+        with the latest, as if meeting them for the first time."""
+        so_far = [x for x in p.mentions if _pos(x[0], x[2]) <= upto]
+        if not so_far:
+            return "", None
+        picked = _spread(so_far[:-1], EXTRACTS - 1) + [so_far[-1]]
+        was = p.not_person, p.alias_of
+        status, entry = one_question(p, words["intro"], [x[3] for x in picked])
+        if p.not_person or p.alias_of:
+            p.not_person, p.alias_of = was          # already settled as a person
+            return "", None
+        if entry and entry == p.entry:
+            return status, ""
+        return status, entry
 
     def write(p):
         first = p.mentions[0]
@@ -866,6 +1040,7 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
             ctx.tell("%s: %s" % (p.name, entry))
         # main and supporting people are looked at again as the book goes on
         regular = p.matters or len(p.mentions) >= 8 or lead
+        looks = 0
         for m_order, m_path, m_para in marks:
             upto = _pos(m_order, m_para)
             if upto < _pos(f_order, f_para):
@@ -879,7 +1054,13 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 continue
             last_seen = p.mentions.index(new[-1]) + 1
             picked = [x[3] for x in _spread(new, EXTRACTS)]
-            if p.entry:
+            looks += 1
+            if p.entry and regular and looks % REWRITE_EVERY == 0:
+                # written afresh from everything so far, not from the draft: a
+                # wrong first entry otherwise lasts the whole book (Mordecai's
+                # in DCC 5 went through eight updates)
+                status, entry = rewrite(p, upto)
+            elif p.entry:
                 status, entry = one_question(p, words["update"], picked, p.entry)
             else:
                 # the first entry failed its checks: try again from here
@@ -902,16 +1083,15 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 p.rows.append((m_order, m_path, m_para, p.status, p.entry))
             if not regular and p.entry:
                 break               # a minor figure gets one entry, maybe a second
-        # one last look over everything since the entry last changed: in DCC 5
-        # Odette's stopped at chapter 57 and Diwata's at 76, each checkpoint
-        # having seen too little to call it a change
+        # one last entry, written afresh from everything the book said about
+        # them: in DCC 5 Odette's stopped at chapter 57 and Diwata's at 76,
+        # and first-entry guesses lasted to the end
         if regular and p.entry and p.rows and marks and not p.not_person:
             last = _pos(p.rows[-1][0], p.rows[-1][2])
             late = [x for x in p.mentions if _pos(x[0], x[2]) > last]
-            if len(late) >= UPDATE_AFTER * 3:
-                status, entry = one_question(p, words["update"],
-                                             [x[3] for x in _spread(late, EXTRACTS)], p.entry)
-                if entry:
+            if late:
+                status, entry = rewrite(p, _pos(marks[-1][0], marks[-1][2]))
+                if entry and entry != p.entry:
                     m_order, m_path, m_para = marks[-1]
                     p.entry = entry
                     if status == "met":

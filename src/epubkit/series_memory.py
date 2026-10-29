@@ -380,10 +380,12 @@ class Names:
     def __init__(self, rows=()):
         self.owner: dict[str, str] = {}     # lower-case name -> list name
         self.kind: dict[str, str] = {}      # list name -> its kind
+        self.spelled: set[str] = set()      # every name and other name, as written
         for name, others, kind in rows:
             name = name.strip()
             if not name:
                 continue
+            self.spelled.update(n.strip() for n in [name] + others if n.strip())
             kind = (kind or "").strip().lower()
             self.kind[name] = "person" if kind in self.PEOPLE else (kind or "")
             for n in [name] + others:
@@ -422,6 +424,12 @@ class Names:
     def of(self, name: str) -> str:
         """The list's name for this one, or "" when it isn't there."""
         return self.owner.get((name or "").strip().lower(), "")
+
+    def words(self) -> set[str]:
+        """Every word of every name on the list: an entry may use them even when
+        the extracts it was written from give only part of a name ("Mar" of
+        "Lucia Mar" cost Cici her entry in DCC 5)."""
+        return {w for n in self.spelled for w in re.findall(r"[\w'’\-]+", n)}
 
     def is_person(self, name: str):
         """True, False, or None when the list doesn't say."""

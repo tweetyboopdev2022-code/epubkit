@@ -19,8 +19,9 @@ class Model:
     changed. A quote is always taken from the prompt's first extract.
     """
 
-    def __init__(self, kinds, entries=None, hero="Carl"):
+    def __init__(self, kinds, entries=None, hero="Carl", untrue=()):
         self.kinds = kinds
+        self.untrue = untrue        # words that make the checking question answer NO
         self.entries = entries or {}
         self.hero = hero
         self.calls = []
@@ -39,6 +40,10 @@ class Model:
                 kind, matters = self.kinds.get(name, ("other", "no"))
                 out.append("%s | %s | %s" % (name, kind, matters))
             return "\n".join(out)
+        if "Sentences to check:" in prompt:
+            said = re.findall(r"(?m)^(\d+)\. (.+)$", prompt.split("Sentences to check:", 1)[1])
+            return "\n".join("%s. %s" % (n, "NO" if any(w in x for w in self.untrue) else "YES")
+                             for n, x in said)
         if "Write what happened" in prompt:
             return "Carl and Donut went down into the dungeon."
         m = re.search(r"(?m)^Person: (.+?)(?: \(also called .*\))?$", prompt)
@@ -413,9 +418,22 @@ def test_a_last_look_covers_everything_since_the_entry_last_changed(tmp_path):
         return "SAME"
     model = Model(KINDS, {"Mordecai": ["A game guide who waits in the guild hall.", later]})
     run(tmp_path, book, model, **BOOK)
-    final = seen[-1].split("since, in order", 1)[1]
-    # the last question sees the early and the late chapters together
+    final = seen[-1]
+    # the last question writes the entry afresh, from the early and the late
+    # chapters together, not from the old draft
+    assert "since, in order" not in final
     assert "chapter 3" in final and "chapter 8" in final
+
+
+def test_a_wrong_first_entry_does_not_last_the_book(tmp_path):
+    chapters = [CH1, CH2] + [["Mordecai said little in chapter %d. %s" % (i, FILLER)] * 3
+                             for i in range(3, 9)]
+    book = dungeon(tmp_path, chapters)
+    model = Model(KINDS, {"Mordecai": ["A game guide who waits in the guild hall.", "SAME",
+                                       "A game guide who trains Carl in the guild hall."]})
+    run(tmp_path, book, model, **BOOK)
+    mine = [r for r in people_of(book) if r[3] == "Mordecai"]
+    assert mine[-1][-1] == "A game guide who trains Carl in the guild hall."
 
 
 def test_titles_and_family_names_join_the_one_person_they_mean():
@@ -521,3 +539,56 @@ def test_a_names_list_joins_nicknames_and_settles_what_is_a_person(tmp_path):
     assert "Syndicate" not in names
     sorts = [c for c in model.calls if "Name | kind | matters" in c]
     assert not any(re.search(r"(?m)^- (Syndicate|Mordecai|Pocket Kuma):", c) for c in sorts)
+
+
+# -- every sentence backed by the book --------------------------------------------
+
+def test_a_sentence_the_book_does_not_back_is_taken_out(tmp_path):
+    book = dungeon(tmp_path, [CH1, CH2])
+    model = Model(KINDS, {"Mordecai": ["A game guide who waits in the guild hall. "
+                                       "He gives Carl a potion in his hand."]},
+                  untrue=("gives Carl",))
+    run(tmp_path, book, model, **BOOK)
+    said = [r[6] for r in people_of(book) if r[3] == "Mordecai"]
+    assert said and all("gives Carl" not in s for s in said)
+    assert any(s.startswith("A game guide who waits") for s in said)
+
+
+def test_an_entry_the_book_does_not_back_at_all_is_asked_again(tmp_path):
+    book = dungeon(tmp_path, [CH1, CH2])
+    model = Model(KINDS, {"Mordecai": ["A wizard who rules Valtay.",
+                                       "A game guide who waits in the guild hall."]},
+                  untrue=("wizard",))
+    run(tmp_path, book, model, **BOOK)
+    said = [r[6] for r in people_of(book) if r[3] == "Mordecai"]
+    assert said and said[0] == "A game guide who waits in the guild hall."
+
+
+def test_joining_or_leaving_needs_a_quote_that_shows_it():
+    words = C.WORDS["en"]
+    assert C.event_problems("A crawler who rejoined the party.", "Katia walked away",
+                            "A crawler in Carl's party.", "left", words)
+    assert not C.event_problems("A crawler who left the party.", "Katia left the party for good",
+                                "A crawler in Carl's party.", "left", words)
+    # said already: not news, no quote needed
+    assert not C.event_problems("A crawler who left the party.", "-",
+                                "A crawler who left the party.", "none", words)
+
+
+def test_a_half_name_from_the_names_list_is_allowed():
+    words = C.WORDS["en"]
+    src = "Cici waved at Lucia. Cici sat down."
+    entry = "A crawler who sits with Lucia Mar."
+    assert C.problems(entry, "Cici waved at Lucia", src, ["Cici"], {}, words)
+    assert C.problems(entry, "Cici waved at Lucia", src, ["Cici"], {}, words,
+                      allowed={"Lucia", "Mar"}) == []
+
+
+def test_one_bad_sentence_does_not_lose_the_whole_entry():
+    words = C.WORDS["en"]
+    src = "Cici waved at Carl. Cici sat down at the table with Donut."
+    entry = "A crawler who sits with Donut at the table. She once ruled Valtay."
+    reason = C.problems(entry, "Cici sat down", src, ["Cici"], {}, words)
+    assert reason
+    kept, left = C._repaired(entry, "Cici sat down", src, ["Cici"], {}, words, "", "", set(), reason)
+    assert kept == "A crawler who sits with Donut at the table." and left == []
