@@ -742,7 +742,7 @@ def test_ships_are_not_people():
 
 
 def test_a_bundled_preview_of_the_next_book_is_not_read():
-    from epubkit.stages.recaps import _story_end, _PREVIEW
+    from epubkit.stages.recaps import _PREVIEW, _story_end
     spine = ["OEBPS/hp01_cover.xhtml"] + ["OEBPS/hp01_ch%03d.xhtml" % i for i in range(1, 18)] + \
         ["OEBPS/hp01_about.xhtml", "OEBPS/hp02_title.xhtml", "OEBPS/hp02_ch001.xhtml"]
     assert _story_end(spine) == 18
