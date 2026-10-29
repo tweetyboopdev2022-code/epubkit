@@ -449,7 +449,7 @@ class Facts:
 
     The file sits next to the memory as "<series>.facts.tsv", one row each::
 
-        Florin<TAB>species<TAB>Crest<TAB>3
+        Florin<TAB>species<TAB>crocodilian<TAB>2
         Bea<TAB>ex-girlfriend<TAB>Carl<TAB>1
         Diwata<TAB>not<TAB>Circe<TAB>5
         Mordecai<TAB>alias<TAB>Pocket Kuma<TAB>4
