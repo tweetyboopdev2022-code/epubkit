@@ -692,3 +692,47 @@ def test_the_facts_list_catches_a_hidden_identity_however_it_is_put(tmp_path):
     for fine in ("A crawler whose sponsor is Circe Took.",
                  "A crawler. She is angry at Circe Took."):
         assert not C.wiki_problems(fine, "Diwata", facts, words), fine
+
+
+def test_an_update_that_gives_back_the_entry_so_far_means_nothing_changed():
+    from epubkit.tools import cast_mistakes as M
+    old = "A crawler and Hekla's friend who has left the party."
+    cases = [{"name": "Katia", "extracts": ["Katia walked out with Hekla's crew."],
+              "current_entry": old}]
+    model = Model(KINDS, {"Katia": [old]})
+
+    def ask(prompt, system, usable):
+        reply = model.complete(prompt, system).text
+        return reply.replace("QUOTE: ", "QUOTE: made up words ")   # a quote not in the extracts
+    got, _r, _s = C.build(M._Ctx(), [], ask, probe=cases)
+    assert got == [""]
+
+
+def test_a_sentence_about_the_narrator_is_dropped_not_the_whole_entry():
+    from epubkit.tools import cast_mistakes as M
+    cases = [{"name": "Mordecai", "extracts": ["Mordecai waited in the guild hall with a potion."]}]
+    model = Model(KINDS, {"Mordecai": ["A game guide who waits in the guild hall. "
+                                       "The narrator visits him."]})
+
+    def ask(prompt, system, usable):
+        return model.complete(prompt, system).text
+    got, _r, _s = C.build(M._Ctx(), [], ask, probe=cases)
+    assert got == ["A game guide who waits in the guild hall."]
+
+
+def test_nothing_changed_will_not_do_when_the_entry_so_far_gets_a_fact_wrong(tmp_path):
+    from epubkit.tools import cast_mistakes as M
+    cases = [{"name": "Katia", "extracts": ["Katia smiled at Donut in the room."],
+              "current_entry": "A human crawler who smiled at Donut."}]
+    seen = []
+
+    def fixed(prompt):
+        seen.append(prompt)
+        return "A crawler who smiled at Donut in the room."
+    model = Model(KINDS, {"Katia": ["SAME", fixed]})
+
+    def ask(prompt, system, usable):
+        return model.complete(prompt, system).text
+    got, _r, _s = C.build(M._Ctx(), [], ask, facts=_facts(tmp_path), probe=cases)
+    assert got == ["A crawler who smiled at Donut in the room."]
+    assert "not human" in seen[0]

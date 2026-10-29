@@ -594,7 +594,7 @@ def _repaired(entry, quote, source, forms, others, words, before, change, allowe
     rather than about the answer as a whole."""
     say = words["problems"]
     # these are about the answer as a whole: no one sentence can be kept
-    whole = {say["shape"], say["quote"], say["leak"]}
+    whole = {say["shape"], say["quote"]}
     if any(r in whole or r.startswith(say["theirs"].split("{")[0]) for r in reason):
         return entry, reason
     keep = []
@@ -777,6 +777,10 @@ def unsupported(ask, words: dict, name: str, title: str, source: str, entry: str
         if 0 <= i < len(said) and m.group(2).lower() in ("no", "non") and said[i] not in out:
             out.append(said[i])
     return out
+
+
+def _plain(text: str) -> str:
+    return " ".join(re.findall(r"\w+", (text or "").lower()))
 
 
 def _same(entry: str) -> bool:
@@ -1007,10 +1011,15 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
         update = bool(current_entry)
         reason = []
         got, reply = None, ""
+        # the entry so far gets a fact wrong: "nothing changed" won't do
+        # (Katia was "a human" from her first entry to the end of DCC 5)
+        stale = [r for _x, r in wiki_problems(current_entry, p.name, facts, words)] \
+            if update else []
         for attempt in range(2):
             if attempt:
-                p.history.append("1st answer: %s\n    why: %s" % (
-                    (got[2] if got else (reply or "")[:200]), "; ".join(reason)))
+                p.history.append("1st answer: %s\n    quote: %s\n    why: %s" % (
+                    (got[2] if got else (reply or "")[:200]), got[0] if got else "",
+                    "; ".join(reason)))
             text = prompt + (words["again"].format(problems="\n".join("- " + r for r in reason))
                              if attempt else "")
             p.asked += 1
@@ -1043,6 +1052,13 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 p.alias_of = other
                 return "", None
             entry = _trim(_unnamed(entry, p.forms))
+            if update and _plain(entry) == _plain(_trim(_unnamed(current_entry, p.forms))):
+                # the entry so far, given back word for word: nothing changed
+                # (round 8 lost Katia's update over the quote it came with)
+                if stale and not attempt:
+                    reason = stale
+                    continue
+                return status, ""
             with lock:
                 others = {w: e for w, e in current.items() if w != p.name}
             reason = problems(entry, quote, source, p.forms, others, words, same_ok=update,
@@ -1062,9 +1078,10 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                                     if not any(w in x for w in bad))
                     if len(kept.split()) >= 4:
                         entry, reason = kept, []
-                if attempt and reason:
-                    # still failing: keep the sentences that pass on their own
-                    # (DCC 5 lost all of Cici for one half-name in one sentence)
+                if reason:
+                    # keep the sentences that pass on their own (DCC 5 lost
+                    # all of Cici for one half-name in one sentence; round 8
+                    # lost Li Na's only tie to Li Jun by asking again)
                     entry, reason = _repaired(entry, quote, source, p.forms, others, words,
                                               current_entry, change, allowed, reason, backed)
                 if not reason:
@@ -1103,12 +1120,16 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 if attempt:
                     p.retried += 1
                 if update and _same(entry):
+                    if stale and not attempt:
+                        reason = stale
+                        continue
                     return status, ""
                 return status, entry
         p.failed += 1
         p.why = "; ".join(reason)[:120]
-        p.history.append("2nd answer: %s\n    why: %s" % (
-            (got[2] if got else (reply or "")[:200]), "; ".join(reason)))
+        p.history.append("2nd answer: %s\n    quote: %s\n    why: %s" % (
+            (got[2] if got else (reply or "")[:200]), got[0] if got else "",
+            "; ".join(reason)))
         ctx.log.debug("    who's who: %s left out: %s", p.name, "; ".join(reason))
         return "", None
 
