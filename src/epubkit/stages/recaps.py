@@ -1284,7 +1284,10 @@ def _documents(book: Path, min_chars: int):
                 if href:
                     spine.append(_join(base, href))
             titles = _toc_titles(z, opf, base, manifest)
+            last = _story_end(spine)
             for order, full in enumerate(spine):
+                if order > last:
+                    break
                 try:
                     raw = z.read(full)
                 except KeyError:
@@ -1301,6 +1304,10 @@ def _documents(book: Path, min_chars: int):
                     # before chapter 1. Nothing here is story.
                     continue
                 head = " ".join(t for _n, t in paras)[:1200].lower()
+                if out and _PREVIEW.search(head[:400]):
+                    # "Turn the page for a sneak peek at..." - the next book
+                    # starts here, and nothing after it is this story
+                    break
                 if any(m in head for m in FRONT) and size < min_chars * 4:
                     continue
                 if size < min_chars and not label:
@@ -1312,6 +1319,28 @@ def _documents(book: Path, min_chars: int):
     except (zipfile.BadZipFile, OSError):
         return []
     return out
+
+
+_PREVIEW = re.compile(r"\b(?:sneak peek|an excerpt from|a preview of|preview of the next|"
+                      r"turn the page for a|un extrait (?:de|du))\b", re.I)
+_FILE_BOOK = re.compile(r"^([A-Za-z]+\d+)[_\-]")
+
+
+def _story_end(spine: list[str]) -> int:
+    """The last spine position that belongs to this book. A bundled preview of
+    the next one comes after it under its own file names (Harry Potter 1
+    ends with hp02_ch001, Chamber of Secrets' first chapter): when most files
+    share a "hp01_"-style prefix, a run at the end with another one is cut."""
+    keys = [(_FILE_BOOK.match(posixpath.basename(p)) or [None, None])[1] for p in spine]
+    known = [k for k in keys if k]
+    if len(known) < max(4, len(spine) // 2):
+        return len(spine) - 1
+    main = max(set(known), key=known.count)
+    last = max(i for i, k in enumerate(keys) if k == main)
+    # only cut when what follows is another book's files, not plain back matter
+    if any(k and k != main for k in keys[last + 1:]):
+        return last
+    return len(spine) - 1
 
 
 def _opf_text(book: Path) -> str:

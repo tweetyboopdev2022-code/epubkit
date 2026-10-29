@@ -739,3 +739,14 @@ def test_a_book_with_no_lead_asks_about_no_lead():
 
 def test_ships_are_not_people():
     assert "ships" in R.PROMPT and "navires" in R.PROMPT_FR
+
+
+def test_a_bundled_preview_of_the_next_book_is_not_read():
+    from epubkit.stages.recaps import _story_end, _PREVIEW
+    spine = ["OEBPS/hp01_cover.xhtml"] + ["OEBPS/hp01_ch%03d.xhtml" % i for i in range(1, 18)] + \
+        ["OEBPS/hp01_about.xhtml", "OEBPS/hp02_title.xhtml", "OEBPS/hp02_ch001.xhtml"]
+    assert _story_end(spine) == 18
+    plain = ["OEBPS/ch%02d.xhtml" % i for i in range(20)]
+    assert _story_end(plain) == 19
+    assert _PREVIEW.search("turn the page for a sneak peek at the next book")
+    assert not _PREVIEW.search("harry read on for hours, then turned the page")
