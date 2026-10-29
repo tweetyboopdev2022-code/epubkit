@@ -419,9 +419,9 @@ def test_a_last_look_covers_everything_since_the_entry_last_changed(tmp_path):
     model = Model(KINDS, {"Mordecai": ["A game guide who waits in the guild hall.", later]})
     run(tmp_path, book, model, **BOOK)
     final = seen[-1]
-    # the last question writes the entry afresh, from the early and the late
-    # chapters together, not from the old draft
-    assert "since, in order" not in final
+    # the last question looks at the entry again against the early and the
+    # late chapters together, keeping what it has learned
+    assert "A game guide who waits in the guild hall." in final
     assert "chapter 3" in final and "chapter 8" in final
 
 

@@ -1168,14 +1168,17 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
         return "", None
 
     def rewrite(p, upto):
-        """A whole new entry from mentions spread over the book so far, ending
-        with the latest, as if meeting them for the first time."""
+        """The entry looked at again against mentions spread over the whole
+        book so far, ending with the latest, not only the newest ones: what
+        those show is wrong goes, what was learned along the way stays.
+        (Round 8 wrote it afresh from these mentions instead, and lost true
+        facts the updates had found: Circe dead, Signet in the Nothing.)"""
         so_far = [x for x in p.mentions if _pos(x[0], x[2]) <= upto]
         if not so_far:
             return "", None
         picked = _spread(so_far[:-1], EXTRACTS - 1) + [so_far[-1]]
         was = p.not_person, p.alias_of
-        status, entry = one_question(p, words["intro"], [x[3] for x in picked])
+        status, entry = one_question(p, words["update"], [x[3] for x in picked], p.entry)
         if p.not_person or p.alias_of:
             p.not_person, p.alias_of = was          # already settled as a person
             return "", None
