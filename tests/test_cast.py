@@ -789,3 +789,12 @@ def test_the_sentence_check_sees_what_is_already_known():
     check = [x for x in prompts if "Sentences to check:" in x]
     assert check and "Already known about Mordecai" in check[0]
     assert "The game guide who trains Carl in the guild hall." in check[0]
+
+
+def test_a_title_and_an_initial_is_not_a_name():
+    docs = [(1, "a.xhtml", "Chapter 1", list(enumerate([
+        "The letter said Mr. H. Potter, The Cupboard under the Stairs. Harry read it twice.",
+        "Then Harry read it again, and Uncle Vernon took it from Harry."])))]
+    names = C.find_names(docs)
+    assert not any(n.startswith("Mr. H") and len(n.split()) == 2 and len(n.split()[1].rstrip(".")) == 1
+                   for n in names)

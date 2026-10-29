@@ -113,6 +113,30 @@ Rules for ENTRY:
 - Never write "the main character", "the narrator", "the speaker", "the protagonist", "currently", "not yet connected", or anything about "the extracts", "the passage" or "the reader".
 - Do not start with their name."""
 
+# The look over the whole book (every few looks, and once at the end): not
+# "has something changed" but "is this complete and right". Harry Potter 1
+# ended with Harry as only "nephew of the Dursleys" and Snape still the villain
+# the children took him for.
+FINAL = UPDATE.replace(
+    "What the book has said about them since, in order:",
+    "Lines about them from across the book so far, in order (the last is where the reader is now):",
+).replace(
+    "Has anything lasting changed about who {name} is: a new role, class or title, a new relationship, "
+    "something revealed, a change in what they are, joining or leaving a group, or their death? A single "
+    "scene is not a change; a death always is.",
+    "This is the entry the reader will see here. Is it complete and right? It should say who {name} is, "
+    "their role, what they are to the main character, and the most important lasting fact about them by now. "
+    "If a later line shows that something believed earlier was wrong (a suspicion, a lie, a disguise), the "
+    "entry says what turned out to be true.",
+).replace(
+    "ENTRY: SAME if CHANGE is none; otherwise the whole entry again,",
+    "ENTRY: SAME if the entry is already complete and right; otherwise the whole entry again,",
+).replace(
+    "QUOTE: <copy a few words, exactly, from the extract that shows the change, or - if nothing changed>",
+    "QUOTE: <copy a few words, exactly, from the extract that backs what you add or correct, or - if SAME>",
+)
+assert FINAL != UPDATE
+
 VERIFY = """Check sentences about {name} against lines from the book "{title}".
 
 Lines from the book:
@@ -220,7 +244,7 @@ Répondez de nouveau de la même façon."""
 
 WORDS = {
     "en": {
-        "system": SYSTEM, "sort": SORT, "intro": INTRO, "update": UPDATE, "again": AGAIN,
+        "system": SYSTEM, "sort": SORT, "intro": INTRO, "update": UPDATE, "final": FINAL, "again": AGAIN,
         "verify": VERIFY,
         "already": "Already known about {name}, from earlier in the book or the series:\n{what}", "checker": "You check facts strictly. You answer only YES or NO per line.",
         "lead": "The story's main character is {hero}.",
@@ -254,7 +278,7 @@ WORDS = {
         },
     },
     "fr": {
-        "system": SYSTEM_FR, "sort": SORT_FR, "intro": INTRO_FR, "update": UPDATE_FR,
+        "system": SYSTEM_FR, "sort": SORT_FR, "intro": INTRO_FR, "update": UPDATE_FR, "final": UPDATE_FR,
         "again": AGAIN_FR, "verify": VERIFY_FR,
         "already": "Ce qu'on sait déjà de {name}, plus tôt dans le livre ou la série :\n{what}",
         "checker": "Vous vérifiez des faits avec rigueur. Vous répondez seulement YES ou NO par ligne.",
@@ -400,6 +424,8 @@ def find_names(docs) -> dict:
             continue            # only ever the first word of a sentence
         if len(one) == 1 and lower[name.lower()] > 3 * e["mid"]:
             continue            # "Hope", "Will": an ordinary word, mostly
+        if len(one) == 2 and one[0].lower().rstrip(".") in _TITLES and len(one[1].rstrip(".")) == 1:
+            continue            # "Mr. H", from a letter's "Mr. H. Potter": an initial, not a name
         out[name] = e
     return out
 
@@ -1188,7 +1214,8 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
             return "", None
         picked = _spread(so_far[:-1], EXTRACTS - 1) + [so_far[-1]]
         was = p.not_person, p.alias_of
-        status, entry = one_question(p, words["update"], [x[3] for x in picked], p.entry)
+        status, entry = one_question(p, words.get("final", words["update"]), [x[3] for x in picked],
+                                     p.entry)
         if p.not_person or p.alias_of:
             p.not_person, p.alias_of = was          # already settled as a person
             return "", None
