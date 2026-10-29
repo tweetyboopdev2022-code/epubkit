@@ -81,6 +81,7 @@ Rules for ENTRY:
 - Only lasting facts that the extracts or the earlier books state outright: what they are, their role, and who they are to the people around them. Not where they are or what they are doing in this scene.
 - When an extract is someone speaking, "I", "me" and "my" are the speaker, not {name}. Name a relationship (brother, owner, partner, boss) only if an extract says it in so many words.
 - If the extracts say little about {name}, the ENTRY says only that little: who mentions them and what for. Never fill it in from anything you may know about this book or series; a short true entry is right, a full one with a guess in it is wrong.
+- A god or spirit who takes over someone's body, or wears their face, is not that person: say whose body or face, never that they are them.
 - Leave out spells, skills, items and levels unless they are what the person is known for.
 - Never write "the main character", "the narrator", "the speaker", "the protagonist", "currently", "not yet connected", or anything about "the extracts", "the passage" or "the reader".
 - Do not start with their name."""
@@ -181,6 +182,7 @@ ENTRY: <une ou deux phrases courtes, en français, qui disent qui est {name} et 
 Règles pour ENTRY :
 - Seulement ce que disent les extraits ou les livres précédents. Aucune supposition, rien de la suite.
 - Si les extraits disent peu de chose de {name}, l'ENTRY ne dit que ce peu. Ne complétez jamais avec ce que vous savez peut-être de ce livre ou de cette série.
+- Un dieu ou un esprit qui prend le corps ou le visage de quelqu'un n'est pas cette personne : dites à qui est ce corps ou ce visage, jamais qu'il est cette personne.
 - Seulement des faits durables, dits clairement : ce qu'il est, son rôle, ce qu'il est pour les autres. Pas où il est ni ce qu'il fait dans cette scène.
 - Quand un extrait fait parler quelqu'un, « je » et « mon » sont celui qui parle, pas {name}. Ne citez un lien (frère, maître, associé) que si un extrait le dit en toutes lettres.
 - N'écrivez jamais « le personnage principal », « le narrateur », « actuellement », « pas encore lié », ni rien sur « les extraits », « le passage » ou « le lecteur ».
@@ -664,9 +666,9 @@ def wiki_problems(entry: str, name: str, facts, words: dict) -> list[tuple[str, 
     out = []
     kinds = facts.kinds()
     mine = facts.species.get(who, set())
-    for x in sentences(entry):
+    for i, x in enumerate(sentences(entry)):
         # what they are: only in the opening words, before "who", a comma...
-        if x is sentences(entry)[0] and mine:
+        if i == 0 and mine:
             head = re.split(r",|;| who | that | and | qui | et ", x, 1)[0].lower()
             said = [k for k in kinds if re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(k), head)]
             if said and not any(k in mine for k in said):
@@ -704,6 +706,18 @@ _IS_REALLY = re.compile(
     r"found to be|en fait|vraiment|en réalité)\b|(?-i:(?=[A-ZÀ-ÖØ-Þ])))|^(?:actually|revealed (?:to be|as))\b|"
     r"\b(?:turns|turned) out to be\b|\bis none other than\b|\b(?:secret|true|real) identity\b|"
     r"\bdisguised as\b|\bse révèle être\b)")
+
+
+def _before_identity(sentence: str) -> str:
+    """A sentence with a wrong "is actually X" cut off before it ("A deity of
+    a desecrated temple who is actually Circe Took" keeps "A deity of a
+    desecrated temple."), or "" when nothing is left worth keeping."""
+    m = _IS_REALLY.search(sentence)
+    if not m:
+        return ""
+    head = re.sub(r"(?i)[\s,;:]*(?:\b(?:who|that|and|but|she|he|they|qui|et|mais|elle|il))*"
+                  r"[\s,;:]*$", "", sentence[:m.start()])
+    return head + "." if len(head.split()) >= 4 else ""
 
 
 def wiki_backed(rels, name: str, facts):
@@ -1094,8 +1108,10 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                             caught[0] += 1
                         continue
                     if wrong:
-                        kept = " ".join(x for x in sentences(entry)
-                                        if x not in {w for w, _r in wrong})
+                        bad = {w for w, _r in wrong}
+                        kept = " ".join(_before_identity(x) if x in bad else x
+                                        for x in sentences(entry))
+                        kept = " ".join(kept.split())
                         if len(kept.split()) < 4:
                             reason = [r for _x, r in wrong]
                         else:

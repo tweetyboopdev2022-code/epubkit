@@ -736,3 +736,16 @@ def test_nothing_changed_will_not_do_when_the_entry_so_far_gets_a_fact_wrong(tmp
     got, _r, _s = C.build(M._Ctx(), [], ask, facts=_facts(tmp_path), probe=cases)
     assert got == ["A crawler who smiled at Donut in the room."]
     assert "not human" in seen[0]
+
+
+def test_a_wrong_species_is_caught_in_an_entry_of_several_sentences(tmp_path):
+    facts, words = _facts(tmp_path), C.WORDS["en"]
+    assert C.wiki_problems("A human Crawler who joined. She left the party.", "Katia",
+                           facts, words)
+
+
+def test_a_wrong_identity_is_cut_off_and_the_rest_kept():
+    assert C._before_identity("A deity associated with a desecrated temple who is "
+                              "actually a baby mantis named Circe Took.") == \
+        "A deity associated with a desecrated temple."
+    assert C._before_identity("She is Circe Took.") == ""
