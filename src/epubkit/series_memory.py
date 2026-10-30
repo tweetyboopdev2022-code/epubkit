@@ -441,15 +441,21 @@ class Names:
         "Lucia Mar" cost Cici her entry in DCC 5)."""
         return {w for n in self.spelled for w in re.findall(r"[\w'’\-]+", n)}
 
-    def is_person(self, name: str):
+    def is_person(self, name: str, text: str = ""):
         """True, False, or None when the list doesn't say. A first name alone
         is a person when it begins one person's name on the list and no one
-        else's: "Lavender" (Lavender Brown). Round 14 lost her and Perenelle
-        to the model. It never joins them: two Dennises may share it."""
+        else's, and the book (text) gives that whole name: "Lavender" when
+        the book has "Brown, Lavender". Round 14 lost her to the model; round
+        15, without the last condition, let in "Don", "Potions" and "Judge".
+        It never joins them: two Dennises may share it."""
         who = self.of(name)
         low = (name or "").strip().lower()
-        if not who and low and " " not in low and low in self._firsts():
-            return True
+        full = self._firsts().get(low) if low and " " not in low else None
+        if not who and full and text:
+            first, last = full.split()[0], full.split()[-1]
+            if re.search(r"(?<![\w'’])(?:%s|%s,\s+%s)(?![\w'’])" % (
+                    re.escape(full), re.escape(last), re.escape(first)), text):
+                return True
         if not who or not self.kind.get(who):
             return None
         return self.kind[who] == "person"

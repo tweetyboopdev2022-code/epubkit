@@ -874,5 +874,9 @@ def test_a_first_name_alone_is_the_one_listed_person_it_begins():
     names = S.Names([("Lavender Brown", [], "person"), ("Harry Potter", ["Harry"], "person"),
                      ("Fred Weasley", [], "person"), ("Fred Flintstone", [], "person"),
                      ("Lavender Field", [], "place")])
-    assert names.is_person("Lavender") and names.of("Lavender") == ""
-    assert names.is_person("Fred") is None          # two Freds: the list can't say
+    book = 'The hat called "Brown, Lavender!" and Lavender ran to the table. Don laughed.'
+    assert names.is_person("Lavender", book) and names.of("Lavender") == ""
+    assert names.is_person("Fred", book) is None          # two Freds: the list can't say
+    # the book never gives the whole name: round 15 let "Don" in this way
+    names2 = S.Names([("Don Juan", [], "person")])
+    assert names2.is_person("Don", book) is None and names.is_person("Lavender") is None

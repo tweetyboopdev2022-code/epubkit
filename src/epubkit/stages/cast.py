@@ -1017,8 +1017,9 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 remembered.add(n)
     listed = {}                     # name -> True (a person) / False, from the list
     if names_list:
+        whole = "\n".join(t for _o, _p, _l, paras in docs for _n, t in paras)
         for n in names:
-            said = names_list.is_person(n)
+            said = names_list.is_person(n, whole)
             if said is not None:
                 listed[n] = said
     # a name used once is a passing mention, unless the earlier books know it
