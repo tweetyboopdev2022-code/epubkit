@@ -880,3 +880,14 @@ def test_a_first_name_alone_is_the_one_listed_person_it_begins():
     # the book never gives the whole name: round 15 let "Don" in this way
     names2 = S.Names([("Don Juan", [], "person")])
     assert names2.is_person("Don", book) is None and names.is_person("Lavender") is None
+
+
+def test_a_description_or_a_title_on_the_list_is_no_first_name():
+    from epubkit import series_memory as S
+    names = S.Names([("Potions Club girl", [], "person"), ("Princess Chonkalot", [], "person"),
+                     ("Popov Brothers (Maxim & Dmitri)", [], "person"),
+                     ("Areson the Wise", [], "person")])
+    book = "Potions Club girl. Princess Chonkalot. Popov Brothers. Areson the Wise spoke."
+    for n in ("Potions", "Princess", "Popov"):
+        assert names.is_person(n, book) is None
+    assert names.is_person("Areson", book)

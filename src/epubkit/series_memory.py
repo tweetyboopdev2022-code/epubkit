@@ -358,6 +358,15 @@ class View:
 # ------------------------------------------------------------ names list
 
 
+_TITLE_WORDS = {"princess", "prince", "queen", "king", "lord", "lady", "sir", "dame",
+                "duke", "duchess", "count", "countess", "baron", "baroness", "emperor",
+                "empress", "captain", "general", "doctor", "professor", "father", "mother",
+                "brother", "sister", "saint", "master", "mister", "miss", "madam"}
+
+
+_LINK_WORDS = {"the", "of", "de", "du", "la", "le", "van", "von", "der", "da", "del", "di"}
+
+
 class Names:
     """A series' names list, from a fan wiki or written by hand: who goes by
     which names, and which names are not people at all. It never says who
@@ -429,9 +438,14 @@ class Names:
         if not hasattr(self, "_first_of"):
             seen: dict[str, str] = {}
             for n, kind in self.kind.items():
-                if kind == "person" and len(n.split()) > 1:
-                    f = n.split()[0].lower()
-                    seen[f] = "" if f in seen and seen[f] != n else n
+                # "Potions Club girl", "Popov Brothers (Maxim & Dmitri)": a
+                # description, not a name; "Princess Chonkalot": a title first
+                if kind != "person" or len(n.split()) < 2 or re.search(r"[(&,]", n) or \
+                        any(w[:1].islower() and w not in _LINK_WORDS for w in n.split()[1:]) or \
+                        n.split()[0].lower() in _TITLE_WORDS:
+                    continue
+                f = n.split()[0].lower()
+                seen[f] = "" if f in seen and seen[f] != n else n
             self._first_of = {f: n for f, n in seen.items() if n}
         return self._first_of
 
