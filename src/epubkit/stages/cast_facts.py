@@ -66,7 +66,7 @@ PART_PEOPLE = 20
 #: facts shown when writing an entry: the first few and the latest
 FIRST_FACTS, LAST_FACTS = 4, 8
 #: an unlisted name is put to the model only if the book uses it this often
-UNLISTED_OFTEN = 6
+UNLISTED_OFTEN = 2
 MAX_FACT_WORDS = 30
 MAX_ENTRY_WORDS = 40
 
@@ -197,11 +197,12 @@ def roster(ctx, docs, ask, names, names_list, view, hero, title, words, report):
             groups.setdefault(n, []).append(n)
         elif n == hero:
             groups.setdefault(n, []).append(n)
-        elif e["n"] >= UNLISTED_OFTEN:
+        elif e["n"] >= UNLISTED_OFTEN and not _family_only(n, names_list):
             unlisted.append(n)
     if unlisted:
         kinds = C.sort_names(ask, {n: names[n] for n in unlisted}, title, words)
-        took = [n for n in unlisted if kinds.get(n, ("",))[0] == "person"]
+        took = [n for n in unlisted if kinds.get(n, ("",))[0] == "person"
+                and (kinds[n][1] or names[n]["n"] >= 4)]
         for n in took:
             groups.setdefault(n, []).append(n)
         report.append("not on the names list, sorted by the model: %d, %d people: %s" % (
@@ -212,6 +213,22 @@ def roster(ctx, docs, ask, names, names_list, view, hero, title, words, report):
             (names_list.of(n) if names_list else "")
     used = {n: e["n"] for n, e in names.items()}
     groups = C.merge_names(groups, used, docs, keep_as=keep_as, hero=hero)
+    # "Crawler Carl", "Dungeon Princess Donut": a word or two in front of
+    # someone else's name, that are nobody's name themselves
+    owner = {f: k for k, fs in groups.items() for f in fs + [k]}
+    for k in sorted(groups, key=lambda k: -len(k.split())):
+        w = k.split()
+        if k not in groups or len(w) < 2:
+            continue
+        for cut in range(1, len(w)):
+            rest, front = " ".join(w[cut:]), w[:cut]
+            other = owner.get(rest)
+            if other and other != k and other in groups and \
+                    not any(owner.get(x) for x in front):
+                groups[other].extend(groups.pop(k))
+                for f in groups[other]:
+                    owner[f] = other
+                break
     # shown as the book names them by the time they come in, not by the
     # wiki's title for them ("Tom Riddle" for Voldemort is a later book's)
     out = {}
@@ -228,6 +245,38 @@ def roster(ctx, docs, ask, names, names_list, view, hero, title, words, report):
         if sum(names.get(f, {}).get("n", 0) for f in forms) >= 2 or shown == hero:
             out[shown] = sorted(set(forms) | {shown})
     return out
+
+
+_HONOR = re.compile(r"^(?:Mr|Mrs|Ms|Miss|Master|Madam|Madame|Mister)\.?\s+")
+
+
+def _family_only(name: str, names_list) -> bool:
+    """"Dursley", "Mr. Potter", "Mrs. Weasley": a family name several listed
+    people share, which the model would make a person of its own."""
+    rest = _HONOR.sub("", name)
+    if " " in rest:
+        return False
+    tail = rest.lower()
+    owners = {n for n, kind in names_list.kind.items()
+              if kind == "person" and len(n.split()) > 1 and n.split()[-1].lower() == tail}
+    return len(owners) >= 2
+
+
+def match(who: str, batch):
+    """The person in batch a fact's name means, or None: the name as given,
+    any of their names, "Carl's" for Carl, "Crawler Carl" or "Carl Johnson"
+    for the one Carl asked about."""
+    w = re.sub(r"['’]s$", "", (who or "").strip(" *`\"“”")).strip()
+    low = w.lower()
+    for p in batch:
+        if any(low == f.lower() for f in p.forms):
+            return p
+    words = set(re.findall(r"[\w'’\-]+", low))
+    hits = [p for p in batch if any(set(f.lower().split()) <= words for f in p.forms)]
+    if len(hits) == 1:
+        return hits[0]
+    hits = [p for p in batch if any(low in f.lower().split() for f in p.forms)]
+    return hits[0] if len(hits) == 1 else None
 
 
 def _parts(paras):
@@ -276,11 +325,6 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
     about = ""
     if hero:
         about = " " + words["first_person" if first_person else "lead"].format(hero=hero)
-    by_form = {}
-    for p in people:
-        for f in p.forms:
-            by_form.setdefault(f, p)
-            by_form.setdefault(f.lower(), p)
     dropped = Counter()
     kept = [0]
     asked = [0]
@@ -334,8 +378,8 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                 except Exception:                           # noqa: BLE001
                     continue
                 for who, fact, quote in parse_facts(reply):
-                    p = by_form.get(who) or by_form.get(who.lower())
-                    if p is None or p not in batch:
+                    p = match(who, batch)
+                    if p is None:
                         dropped["not one of the people asked about"] += 1
                         continue
                     bad = fact_problems(fact, quote, text, p.forms, known_of(p), allowed,
@@ -376,6 +420,45 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                                    "met" if p.name == hero else "heard", entry))
                     p.entry = entry
                     ctx.tell("%s: %s" % (p.name, entry))
+    # someone named but never told about yet gets one question of their own,
+    # on where the book brings them in (round 16 left 31 people in DCC 5 out)
+    for p in [p for p in people if not p.rows and not p.facts]:
+        first = p.mentions[0]
+        bits = [(first[0], first[1], first[2])] + \
+            [(m[0], m[1], m[2]) for m in p.mentions[1:4]]
+        texts = []
+        for order, path, para in bits:
+            for o, _p, _l, paras in docs:
+                if o == order:
+                    texts += [(order, path, n, t) for n, t in paras if para <= n <= para + 1]
+        seen, part = set(), []
+        for x in texts:
+            if (x[0], x[2]) not in seen:
+                seen.add((x[0], x[2]))
+                part.append(x)
+        text = "\n\n".join(t for *_k, t in part)
+        asked[0] += 1
+        try:
+            reply = ask(FACTS.format(title=title, about=about, text=text,
+                                     people="- %s: nothing yet" % p.name),
+                        SYSTEM, lambda t: bool(parse_facts(t)) or "NONE" in t.upper())
+        except Exception:                                   # noqa: BLE001
+            continue
+        for who, fact, quote in parse_facts(reply):
+            if match(who, [p]) is None or \
+                    fact_problems(fact, quote, text, p.forms, "", allowed, facts, p.name):
+                continue
+            q = _bare(quote)
+            at = next((x for x in part if q in _bare(x[3])), part[0])
+            p.facts.append(Fact(C._pos(at[0], at[2]), at[0], at[1], at[2],
+                                fact.rstrip(". ") + "."))
+            kept[0] += 1
+            break
+        if p.facts:
+            f = p.facts[0]
+            entry = compose(p, p.facts)
+            p.rows.append((f.order, f.path, f.para, "heard", entry))
+            p.entry = entry
     # someone the book names but never says anything lasting about still
     # gets what the earlier books said, where they first come in
     for p in people:

@@ -117,3 +117,34 @@ def test_a_fact_is_checked_against_its_text():
     assert any(b.startswith("tie") for b in F.fact_problems(
         "The sister of Donut, a doppelganger", "Katia is a doppelganger", text + " Donut ran.",
         ["Katia"], ""))
+
+
+def test_a_fact_under_a_slightly_different_name_finds_its_person():
+    carl = type("P", (), {"forms": ["Carl"]})()
+    katia = type("P", (), {"forms": ["Katia", "Katia Grimaldi"]})()
+    batch = [carl, katia]
+    assert F.match("Carl's", batch) is carl and F.match("Crawler Carl", batch) is carl
+    assert F.match("Katia Grimaldi", batch) is katia and F.match("katia", batch) is katia
+    assert F.match("Zorblax", batch) is None
+
+
+def test_a_family_name_several_people_share_is_nobody():
+    names = S.Names([("Vernon Dursley", [], "person"), ("Petunia Dursley", [], "person"),
+                     ("Neville Longbottom", [], "person")])
+    assert F._family_only("Mr. Dursley", names) and F._family_only("Dursley", names)
+    assert not F._family_only("Longbottom", names) and not F._family_only("Mr. Ollivander", names)
+
+
+def test_someone_never_told_about_gets_a_question_of_their_own():
+    class Shy(Model):
+        """Says nothing about Katia unless she is asked about alone."""
+        def __call__(self, prompt, system, usable):
+            reply = super().__call__(prompt, system, usable)
+            if "Name | fact | quote" in prompt and "- Katia: nothing yet" not in prompt:
+                reply = "\n".join(x for x in reply.splitlines()
+                                   if not x.startswith("Katia")) or "NONE"
+            return reply
+    model = Shy(FACTS)
+    rows, _report, _ = run(model)
+    katia = [r for r in rows if r[3] == "Katia"]
+    assert katia and "doppelganger" in katia[0][6]
