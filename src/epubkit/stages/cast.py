@@ -371,6 +371,7 @@ _TITLES = {"mr", "mrs", "ms", "dr", "sir", "lady", "lord", "miss", "madam", "mon
            "madame", "mademoiselle", "professor", "uncle", "aunt"}
 _PRONOUNS = {"i", "i'm", "i’m", "i'd", "i’d", "i'll", "i’ll", "i've", "i’ve", "me", "my"}
 _ENDS = re.compile(r"(?:['’]s|['’])$")
+_ELIDED = re.compile(r"(?i)['’](?:t|ll|re|ve|d|m)?$")
 _NOT_IN_A_NAME = {"that", "this", "which", "who", "is", "are", "was", "were"}
 _HONORIFICS = {"majesty", "your majesty", "her majesty", "his majesty", "highness",
                "your highness", "excellency", "your excellency", "lordship", "ladyship",
@@ -427,6 +428,9 @@ def find_names(docs) -> dict:
                 # "Vol-, sorry - I mean, You-Know-Who": a name broken off
                 if m.group(0).rstrip().endswith("-") or text[m.end():m.end() + 1] in "—–":
                     entry["cut"] += 1
+                # "Don’t", Hagrid's "Don’ make me": a word, not a name
+                if _ELIDED.search(m.group(0)):
+                    entry["elided"] = entry.get("elided", 0) + 1
                 # "Enchanted Crown of the Sepsis Whore": the end of a longer name
                 at = m.start() + max(0, m.group(0).find(name.split()[0]))
                 if _OF_A_NAME.search(text[:at]):
@@ -440,7 +444,7 @@ def find_names(docs) -> dict:
         one = name.split()
         if e["mid"] == 0:
             continue            # only ever the first word of a sentence
-        if e["cut"] == e["n"] or e["inside"] == e["n"]:
+        if e["cut"] == e["n"] or e["inside"] == e["n"] or 2 * e.get("elided", 0) >= e["n"]:
             continue            # only ever broken off, or part of a longer name
         if len(one) == 1 and lower[name.lower()] > 3 * e["mid"]:
             continue            # "Hope", "Will": an ordinary word, mostly

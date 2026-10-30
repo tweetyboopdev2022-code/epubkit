@@ -891,3 +891,10 @@ def test_a_description_or_a_title_on_the_list_is_no_first_name():
     for n in ("Potions", "Princess", "Popov"):
         assert names.is_person(n, book) is None
     assert names.is_person("Areson", book)
+
+
+def test_a_contraction_is_not_a_name():
+    t = ('“Don’t be sorry,” Hagrid said. “Don’ make me.” Then “Don’t ask,” said Ron. '
+         '“Don’t be silly.” Ron’s hat. James’ wand and Ron laughed.')
+    names = C.find_names([(1, "a", "", [(0, t)])])
+    assert "Don" not in names and "Ron" in names
