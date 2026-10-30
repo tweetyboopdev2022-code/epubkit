@@ -258,11 +258,18 @@ def roster(ctx, docs, ask, names, names_list, view, hero, title, words, report):
             rest, front = " ".join(w[cut:]), w[:cut]
             other = owner.get(rest)
             if other and other != k and other in groups and \
-                    not any(owner.get(x) for x in front):
+                    not any(owner.get(x) and x.lower() not in C._RANK_WORDS for x in front):
                 groups[other].extend(groups.pop(k))
                 for f in groups[other]:
                     owner[f] = other
                 break
+    # "Theobold" for "Theobald": one letter apart in a long name is a typo
+    # (the book's or the wiki's), not a second person
+    keys = sorted(groups, key=lambda k: -sum(used.get(f, 0) for f in groups[k]))
+    for i, a in enumerate(keys):
+        for b in keys[i + 1:]:
+            if a in groups and b in groups and _one_letter(a, b):
+                groups[a].extend(groups.pop(b))
     # shown as the book names them by the time they come in, not by the
     # wiki's title for them ("Tom Riddle" for Voldemort is a later book's)
     out = {}
@@ -294,6 +301,18 @@ def _family_only(name: str, names_list) -> bool:
     owners = {n for n, kind in names_list.kind.items()
               if kind == "person" and len(n.split()) > 1 and n.split()[-1].lower() == tail}
     return len(owners) >= 2
+
+
+def _one_letter(a: str, b: str) -> bool:
+    a, b = C._squash(a), C._squash(b)
+    if a == b:
+        return True
+    if min(len(a), len(b)) < 6 or abs(len(a) - len(b)) > 1 or a[0] != b[0]:
+        return False
+    if len(a) == len(b):
+        return sum(x != y for x, y in zip(a, b, strict=True)) == 1
+    short, long_ = sorted((a, b), key=len)
+    return any(long_[:i] + long_[i + 1:] == short for i in range(len(long_)))
 
 
 def match(who: str, batch):

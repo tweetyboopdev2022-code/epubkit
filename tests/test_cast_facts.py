@@ -171,3 +171,9 @@ def test_who_they_are_is_never_pushed_out_by_the_latest_facts():
     who, changes = F._shown_facts(facts)
     assert [f.text for f in who] == ["fact 0", "fact 1"]
     assert changes[-1].text == "fact 11" and len(changes) <= F.LAST_FACTS
+
+
+def test_one_letter_apart_in_a_long_name_is_one_person():
+    assert F._one_letter("Theobald", "Theobold") and F._one_letter("D'Nadia", "D’Nadia")
+    assert not F._one_letter("Marla", "Marta") and not F._one_letter("Dmitri", "Maxim")
+    assert not F._one_letter("Jessica", "Jessie")
