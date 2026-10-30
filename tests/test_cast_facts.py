@@ -177,3 +177,19 @@ def test_one_letter_apart_in_a_long_name_is_one_person():
     assert F._one_letter("Theobald", "Theobold") and F._one_letter("D'Nadia", "D’Nadia")
     assert not F._one_letter("Marla", "Marta") and not F._one_letter("Dmitri", "Maxim")
     assert not F._one_letter("Jessica", "Jessie")
+
+
+def test_what_the_earlier_books_said_is_checked_against_the_facts_list():
+    class View:
+        people = {}
+
+        def name_of(self, n, _strict=False):
+            return "Iota" if n == "Iota" else ""
+
+        def tie(self, n):
+            return "A human accountant. Mordecai's old friend." if n == "Iota" else ""
+
+    facts = S.Facts([("Iota", "species", "crocodilian"), ("Carl", "species", "human")])
+    rows, _report, _ = run(Model([]), view=View(), facts=facts)
+    text = " ".join(r[6] for r in rows if r[3] == "Iota")
+    assert "human" not in text and "old friend" in text

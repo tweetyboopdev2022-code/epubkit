@@ -28,6 +28,7 @@ Rows have the same shape as cast.build's, so the Kobo side does not change.
 from __future__ import annotations
 
 import difflib
+import os
 import re
 from collections import Counter
 
@@ -369,6 +370,11 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
         p.facts = []
         if p.mentions:
             line = view.tie(shown) if view else ""
+            # what the earlier books said is checked like any fact: rounds 16
+            # and 17 carried an old "human" Florin and Li Na "sister of Zhang"
+            # forward word for word, against the facts list
+            bad = {x for x, _r in C.wiki_problems(line, shown, facts, words)} if line else set()
+            line = " ".join(x for x in C.sentences(line) if x not in bad)
             if line and not C.LEAK.search(line):
                 m = p.mentions[0]
                 p.facts.append(Fact(C._pos(m[0], m[2]), m[0], m[1], m[2], line, earlier=True))
@@ -532,6 +538,11 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
     if dropped:
         report.append("facts turned down: " + ", ".join(
             "%d %s" % (n, why) for why, n in dropped.most_common()))
+    if os.environ.get("CAST_HISTORY"):
+        for p in people:
+            if p.history:
+                report.append("history %s:" % p.name)
+                report.extend("  " + h for h in p.history)
     lost = [p.name for p in people if not p.rows]
     if lost:
         report.append("nothing said about: " + ", ".join(lost[:40]))
