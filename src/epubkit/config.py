@@ -198,8 +198,10 @@ class RecapConfig:
     #: answer as it goes (passages), or from the whole book at once - names
     #: found in the text, one entry per person updated only when something
     #: lasting changes, every entry checked against the book (book; see
-    #: epubkit/stages/cast.py). With cast_only, "book" does not read the
-    #: passages at all
+    #: epubkit/stages/cast.py); or facts: the series' names list decides who
+    #: is listed and entries are written from facts gathered chapter by
+    #: chapter (epubkit/stages/cast_facts.py; without a names list it is
+    #: "book"). With cast_only, "book" and "facts" do not read the passages
     cast_method: str = "passages"
     #: with cast_method = "book", write what it did with each book, and every
     #: entry, to <this folder>/<book>.cast.txt. Empty: no report

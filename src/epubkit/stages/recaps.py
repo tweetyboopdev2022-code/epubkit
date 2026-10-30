@@ -617,10 +617,14 @@ class RecapStage(Stage):
         # The who's who from the whole book (stages/cast.py) rather than from
         # each passage's answer. With the recap text kept, the passages are
         # not read at all.
-        book_cast = rc.cast and getattr(rc, "cast_method", "passages") == "book"
+        method = getattr(rc, "cast_method", "passages")
+        book_cast = rc.cast and method in ("book", "facts")
 
         def whole_book_cast():
-            from . import cast as book
+            if method == "facts":
+                from . import cast_facts as book
+            else:
+                from . import cast as book
 
             def ask(prompt, system, usable):
                 return answers.ask(ctx.provider, prompt, system, usable=usable)
