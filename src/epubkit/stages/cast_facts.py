@@ -232,7 +232,7 @@ def roster(ctx, docs, ask, names, names_list, view, hero, title, words, report):
     # shown as the book names them by the time they come in, not by the
     # wiki's title for them ("Tom Riddle" for Voldemort is a later book's)
     out = {}
-    for k, forms in groups.items():
+    for _k, forms in groups.items():
         forms = [f for f in forms if f in names] or forms
         if hero and hero in forms:
             shown = hero
@@ -355,7 +355,7 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
         return _fallback(upto_facts)
 
     total = len(docs)
-    for i, (order, path, label, paras) in enumerate(docs):
+    for i, (order, path, _label, paras) in enumerate(docs):
         ctx.report("who's who: chapter %d/%d" % (i + 1, total))
         for part in _parts(paras):
             text = "\n\n".join(t for _n, t in part)
