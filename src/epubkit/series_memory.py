@@ -425,6 +425,16 @@ class Names:
         """The list's name for this one, or "" when it isn't there."""
         return self.owner.get((name or "").strip().lower(), "")
 
+    def _firsts(self) -> dict[str, str]:
+        if not hasattr(self, "_first_of"):
+            seen: dict[str, str] = {}
+            for n, kind in self.kind.items():
+                if kind == "person" and len(n.split()) > 1:
+                    f = n.split()[0].lower()
+                    seen[f] = "" if f in seen and seen[f] != n else n
+            self._first_of = {f: n for f, n in seen.items() if n}
+        return self._first_of
+
     def words(self) -> set[str]:
         """Every word of every name on the list: an entry may use them even when
         the extracts it was written from give only part of a name ("Mar" of
@@ -432,8 +442,14 @@ class Names:
         return {w for n in self.spelled for w in re.findall(r"[\w'’\-]+", n)}
 
     def is_person(self, name: str):
-        """True, False, or None when the list doesn't say."""
+        """True, False, or None when the list doesn't say. A first name alone
+        is a person when it begins one person's name on the list and no one
+        else's: "Lavender" (Lavender Brown). Round 14 lost her and Perenelle
+        to the model. It never joins them: two Dennises may share it."""
         who = self.of(name)
+        low = (name or "").strip().lower()
+        if not who and low and " " not in low and low in self._firsts():
+            return True
         if not who or not self.kind.get(who):
             return None
         return self.kind[who] == "person"

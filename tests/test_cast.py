@@ -867,3 +867,12 @@ def test_a_quote_differs_from_the_book_only_in_case_and_marks():
     assert words["problems"]["quote"] not in C.problems(
         "The school nurse at Hogwarts.", "SAME", "Madam Pomfrey, the school nurse at Hogwarts",
         ["Madam Pomfrey"], {}, words)
+
+
+def test_a_first_name_alone_is_the_one_listed_person_it_begins():
+    from epubkit import series_memory as S
+    names = S.Names([("Lavender Brown", [], "person"), ("Harry Potter", ["Harry"], "person"),
+                     ("Fred Weasley", [], "person"), ("Fred Flintstone", [], "person"),
+                     ("Lavender Field", [], "place")])
+    assert names.is_person("Lavender") and names.of("Lavender") == ""
+    assert names.is_person("Fred") is None          # two Freds: the list can't say
