@@ -803,3 +803,49 @@ def test_a_title_and_an_initial_is_not_a_name():
 def test_a_sentence_does_not_end_at_mr():
     assert C.sentences("Referred to as You-Know-Who by Mr. Dursley. He fears him.") == \
         ["Referred to as You-Know-Who by Mr. Dursley.", "He fears him."]
+
+
+def test_a_name_broken_off_or_inside_a_longer_name_is_not_a_name():
+    docs = [(1, "a.xhtml", "", [
+        (0, "Hagrid said Vol- sorry, I mean You-Know-Who. Then Hagrid sat down."),
+        (1, "Carl held the Enchanted Crown of the Sepsis Whore up to Donut."),
+        (2, "Donut wanted the Enchanted Crown of the Sepsis Whore for herself."),
+        (3, "The Fat Friar waved at Harry, and the Fat Friar smiled.")])]
+    names = C.find_names(docs)
+    assert "Vol" not in names and "Sepsis Whore" not in names
+    assert {"Hagrid", "Donut", "Fat Friar"} <= set(names)
+
+
+def test_an_entry_in_the_past_tense_reads_as_if_they_were_gone():
+    words = C.WORDS["en"]
+    src = "Louis was a crawler. Louis is engaged to Juice Box and was loud."
+    past = words["problems"]["past"]
+    gone = C.problems("Louis was a crawler who was engaged to Juice Box.",
+                      "Louis is engaged to Juice Box", src, ["Louis"], {}, words)
+    assert past in gone
+    now = C.problems("Louis is a crawler who was engaged to Juice Box.",
+                     "Louis is engaged to Juice Box", src, ["Louis"], {}, words)
+    assert past not in now
+    dead = C.problems("Louis was a crawler until he died to a trap.",
+                      "Louis was a crawler", src + " He died to a trap.", ["Louis"], {}, words)
+    assert past not in dead
+
+
+def test_a_title_in_front_of_a_full_name_still_ties_its_halves():
+    # HP1: "Chaser Angelina Johnson" left "Angelina" and "Johnson" as two people
+    groups = {"Angelina": ["Angelina"], "Johnson": ["Johnson"], "Harry": ["Harry"]}
+    used = {"Angelina": 4, "Johnson": 2, "Chaser Angelina Johnson": 1, "Harry": 500}
+    got = C.merge_names(groups, used, [], hero="Harry")
+    assert "Johnson" in got["Angelina"] and "Johnson" not in got
+
+
+def test_a_one_word_wiki_row_that_ends_another_name_says_nothing():
+    from epubkit import series_memory as S
+    names = S.Names([("Fat Friar", ["The Fat Friar"], "person"), ("Friar", [], "person"),
+                     ("Rubeus Hagrid", ["Hagrid"], "person"), ("Peeves", [], "person")])
+    assert names.of("Friar") == "" and names.of("Fat Friar") == "Fat Friar"
+    assert names.of("Hagrid") == "Rubeus Hagrid" and names.of("Peeves") == "Peeves"
+    groups = {"Fat Friar": ["Fat Friar"], "Friar": ["Friar"]}
+    got = C.merge_names(groups, {"Fat Friar": 3, "Friar": 1}, [],
+                        keep_as=lambda n: names.of(n), hero="Harry")
+    assert "Friar" in got["Fat Friar"] and "Friar" not in got

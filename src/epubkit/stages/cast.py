@@ -148,6 +148,7 @@ Sentences to check:
 For each sentence, answer on its own line with its number, YES or NO:
 YES only if the lines, or what is already known, say it plainly (other words are fine).
 NO if any part of it is a guess, goes further than the lines, swaps who did what, gets a relationship wrong, or says someone joined when they left (or the other way round).
+NO also if the lines say it about someone else: a line can name {name} and still be about another person, like a different trainer, guide or god in the same scene.
 Answer only the numbered lines."""
 
 VERIFY_FR = """Vérifiez des phrases sur {name} à l'aide de lignes du livre « {title} ».
@@ -161,6 +162,7 @@ Phrases à vérifier :
 Pour chaque phrase, répondez sur sa propre ligne par son numéro, YES ou NO :
 YES seulement si les lignes, ou ce qu'on sait déjà, le disent clairement (en d'autres mots, c'est bien).
 NO si une partie est une supposition, va plus loin que les lignes, inverse qui a fait quoi, se trompe de lien, ou dit qu'il a rejoint alors qu'il est parti (ou l'inverse).
+NO aussi si les lignes le disent de quelqu'un d'autre : une ligne peut nommer {name} et parler d'une autre personne de la même scène.
 Répondez seulement par les lignes numérotées."""
 
 AGAIN = """
@@ -267,6 +269,8 @@ WORDS = {
             "relation": "the extracts never say {who} is anyone's {rel} near this person: "
                         "a relationship must be one the extracts state about {name}",
             "scene": "the ENTRY says where they are or what they are doing now; say who they are",
+            "past": "the ENTRY speaks of them in the past tense, as if they were gone; unless "
+                    "the extracts say they died or left, say who they are in the present tense",
             "event": "the ENTRY says {what}, which your QUOTE and the entry so far do not show",
             "change": "the ENTRY says {what}, but CHANGE says {change}",
             "unsupported": "the book lines do not back this up: {what}",
@@ -302,6 +306,8 @@ WORDS = {
             "relation": "les extraits ne disent jamais que {who} a ce lien ({rel}) ici : "
                         "un lien doit être dit par les extraits à propos de {name}",
             "scene": "l'ENTRY dit où il est ou ce qu'il fait maintenant ; dites qui c'est",
+            "past": "l'ENTRY parle d'eux au passé, comme s'ils n'étaient plus là ; sauf si les "
+                    "extraits disent qu'ils sont morts ou partis, dites qui c'est au présent",
             "event": "l'ENTRY dit {what}, ce que votre QUOTE et la fiche ne montrent pas",
             "change": "l'ENTRY dit {what}, mais CHANGE dit {change}",
             "unsupported": "les lignes du livre ne le disent pas : {what}",
@@ -365,6 +371,7 @@ _TITLES = {"mr", "mrs", "ms", "dr", "sir", "lady", "lord", "miss", "madam", "mon
            "madame", "mademoiselle", "professor", "uncle", "aunt"}
 _PRONOUNS = {"i", "i'm", "i’m", "i'd", "i’d", "i'll", "i’ll", "i've", "i’ve", "me", "my"}
 _ENDS = re.compile(r"(?:['’]s|['’])$")
+_OF_A_NAME = re.compile(r"[A-ZÀ-ÖØ-Þ][\w'’\-]*\s+(?:of|de|du|des)\s+(?:(?:the|la|le|les)\s+)?$")
 _START = re.compile(r"(?:^|[.!?…:;—–\"“”«»(\[]|\s-)\s*$")
 
 
@@ -411,8 +418,15 @@ def find_names(docs) -> dict:
                 at_start = bool(_START.search(text[:m.start()])) and \
                     name.split()[0] == m.group(0).split()[0] and len(name.split()) == 1
                 entry = found.setdefault(name, {"n": 0, "mid": 0, "first": (order, n),
-                                                "line": ""})
+                                                "line": "", "cut": 0, "inside": 0})
                 entry["n"] += 1
+                # "Vol-, sorry - I mean, You-Know-Who": a name broken off
+                if m.group(0).rstrip().endswith("-") or text[m.end():m.end() + 1] in "—–":
+                    entry["cut"] += 1
+                # "Enchanted Crown of the Sepsis Whore": the end of a longer name
+                at = m.start() + max(0, m.group(0).find(name.split()[0]))
+                if _OF_A_NAME.search(text[:at]):
+                    entry["inside"] += 1
                 if not at_start:
                     entry["mid"] += 1
                 if not entry["line"] or (not at_start and entry["mid"] == 1):
@@ -422,6 +436,8 @@ def find_names(docs) -> dict:
         one = name.split()
         if e["mid"] == 0:
             continue            # only ever the first word of a sentence
+        if e["cut"] == e["n"] or e["inside"] == e["n"]:
+            continue            # only ever broken off, or part of a longer name
         if len(one) == 1 and lower[name.lower()] > 3 * e["mid"]:
             continue            # "Hope", "Will": an ordinary word, mostly
         if len(one) == 2 and one[0].lower().rstrip(".") in _TITLES and len(one[1].rstrip(".")) == 1:
@@ -496,6 +512,12 @@ LEAK = re.compile(
 SCENE = re.compile(r"(?i)\b(?:currently|right now|at the moment|at present|for now|"
                    r"in this scene|(?:is|are) (?:scheduled|due|set) to|is about to|"
                    r"actuellement|en ce moment|pour l['’]instant|(?:est|sont) prévue?s? pour)\b")
+# Louis in DCC 5 became "Louis was a crawler... was engaged": alive, but
+# written up as if dead
+_GONE = re.compile(r"(?i)^\W*(?:[\w'’.\-]+\s+){0,4}(?:was|were)\b")
+_PRESENT = re.compile(r"(?i)\b(?:is|are|has|have)\b")
+_DEAD = re.compile(r"(?i)\b(?:died|dies|dead|death|killed|murdered|late|former(?:ly)?|"
+                   r"left|gone|ghost|once|used to|until|before)\b")
 KIND = re.compile(r"(?im)^[^\w\n]*kind[^\w\n]*:?[ \t]*(.*)$")
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-ZÀ-Þ\"“«])")
 _ABBREV = re.compile(r"(?:^|\s)(?:Mr|Mrs|Ms|Dr|St|Mt|Prof|Sgt|Capt|Lt|Col|Gen|Jr|Sr|M|Mme|Mlle)\.$")
@@ -611,6 +633,8 @@ def problems(entry: str, quote: str, source: str, name_forms, others: dict,
         out.append(say["leak"])
     if SCENE.search(entry):
         out.append(say["scene"])
+    if _GONE.match(entry) and not _PRESENT.search(entry) and not _DEAD.search(entry):
+        out.append(say["past"])
     n_words = len(entry.split())
     if n_words > MAX_WORDS or len(_SENTENCE.split(entry)) > 2:
         out.append(say["long"])
@@ -656,7 +680,7 @@ def _repaired(entry, quote, source, forms, others, words, before, change, allowe
     keep = []
     for x in sentences(entry):
         bad = problems(x, quote, source, forms, {}, words, allowed=allowed)
-        bad = [b for b in bad if b != say["short"]]
+        bad = [b for b in bad if b not in (say["short"], say["past"])]
         bad += event_problems(x, quote, before, change, words)
         if not bad and not backed(unbacked_relations(x, source)):
             keep.append(x)
@@ -1570,6 +1594,10 @@ def merge_names(groups: dict, used: dict, docs, keep_as=None, hero: str = "") ->
 
     for n in sorted(used, key=lambda n: -used[n]):
         words_ = n.split()
+        # "Chaser Angelina Johnson": a word in front that is no one's name
+        if len(words_) == 3 and not hon.match(n) and not holding(words_[0]):
+            words_ = words_[1:]
+            n = " ".join(words_)
         if len(words_) != 2 or hon.match(n) or ends[words_[1]] >= 2:
             continue
         first, last = words_
