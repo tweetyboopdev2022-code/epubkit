@@ -148,7 +148,7 @@ Sentences to check:
 For each sentence, answer on its own line with its number, YES or NO:
 YES only if the lines, or what is already known, say it plainly (other words are fine).
 NO if any part of it is a guess, goes further than the lines, swaps who did what, gets a relationship wrong, or says someone joined when they left (or the other way round).
-NO also if the lines say it about someone else: a line can name {name} and still be about another person, like a different trainer, guide or god in the same scene.
+NO also if the lines plainly say it about a different named person, not {name}.
 Answer only the numbered lines."""
 
 VERIFY_FR = """Vérifiez des phrases sur {name} à l'aide de lignes du livre « {title} ».
@@ -162,7 +162,7 @@ Phrases à vérifier :
 Pour chaque phrase, répondez sur sa propre ligne par son numéro, YES ou NO :
 YES seulement si les lignes, ou ce qu'on sait déjà, le disent clairement (en d'autres mots, c'est bien).
 NO si une partie est une supposition, va plus loin que les lignes, inverse qui a fait quoi, se trompe de lien, ou dit qu'il a rejoint alors qu'il est parti (ou l'inverse).
-NO aussi si les lignes le disent de quelqu'un d'autre : une ligne peut nommer {name} et parler d'une autre personne de la même scène.
+NO aussi si les lignes le disent clairement d'une autre personne nommée, pas de {name}.
 Répondez seulement par les lignes numérotées."""
 
 AGAIN = """
@@ -371,6 +371,10 @@ _TITLES = {"mr", "mrs", "ms", "dr", "sir", "lady", "lord", "miss", "madam", "mon
            "madame", "mademoiselle", "professor", "uncle", "aunt"}
 _PRONOUNS = {"i", "i'm", "i’m", "i'd", "i’d", "i'll", "i’ll", "i've", "i’ve", "me", "my"}
 _ENDS = re.compile(r"(?:['’]s|['’])$")
+_NOT_IN_A_NAME = {"that", "this", "which", "who", "is", "are", "was", "were"}
+_HONORIFICS = {"majesty", "your majesty", "her majesty", "his majesty", "highness",
+               "your highness", "excellency", "your excellency", "lordship", "ladyship",
+               "holiness", "your grace"}
 _OF_A_NAME = re.compile(r"[A-ZÀ-ÖØ-Þ][\w'’\-]*\s+(?:of|de|du|des)\s+(?:(?:the|la|le|les)\s+)?$")
 _START = re.compile(r"(?:^|[.!?…:;—–\"“”«»(\[]|\s-)\s*$")
 
@@ -440,6 +444,8 @@ def find_names(docs) -> dict:
             continue            # only ever broken off, or part of a longer name
         if len(one) == 1 and lower[name.lower()] > 3 * e["mid"]:
             continue            # "Hope", "Will": an ordinary word, mostly
+        if any(w.lower() in _NOT_IN_A_NAME for w in one[1:]) or name.lower() in _HONORIFICS:
+            continue            # "Queen of All That Is", "Majesty": a title, not a name
         if len(one) == 2 and one[0].lower().rstrip(".") in _TITLES and len(one[1].rstrip(".")) == 1:
             continue            # "Mr. H", from a letter's "Mr. H. Potter": an initial, not a name
         out[name] = e
@@ -595,6 +601,13 @@ def parse_entry(text: str) -> tuple[str, str, str] | None:
     return quote, status, entry
 
 
+def n_same_ok(entry: str) -> bool:
+    """A QUOTE of SAME is let through for an entry of two sentences or less:
+    16 good revisions in round 14 (Pomfrey "the school nurse") were lost to it,
+    and every new sentence still goes to the sentence check."""
+    return bool(entry) and len(_SENTENCE.split(entry)) <= 2
+
+
 def _norm(s: str) -> str:
     s = s.replace("’", "'").replace("“", '"').replace("”", '"').replace("…", "...")
     return re.sub(r"\s+", " ", re.sub(r"[\"«»]", "", s)).strip().lower()
@@ -623,7 +636,10 @@ def problems(entry: str, quote: str, source: str, name_forms, others: dict,
     out = []
     plain = _norm(source)
     q = _norm(quote).strip(". ")
-    if len(q.split()) < 2 or q not in plain:
+    bare = " ".join(re.findall(r"[\w'\-]+", q))
+    if q in ("same", "-", "none", "") and n_same_ok(entry):
+        pass        # a revision with nothing new to show; the sentence check reads it
+    elif len(q.split()) < 2 or (q not in plain and bare not in " ".join(re.findall(r"[\w'\-]+", plain))):
         # a quote stitched across a cut is still a quote if each piece of it
         # is there word for word
         pieces = [p for p in re.split(r"\.\.\.", q) if len(p.split()) >= 2]
@@ -1485,7 +1501,9 @@ def merge_names(groups: dict, used: dict, docs, keep_as=None, hero: str = "") ->
         # and one they don't ("Seamus" and "Seamus Finnigan") may still join
         if keep_as:
             a, b = keep_as(small), keep_as(big)
-            if a and b and a != b:
+            # a one-word list name that ends the other one is no one else:
+            # the HP wiki's own "Friar" kept "My dear Friar" from the Fat Friar
+            if a and b and a != b and not (" " not in a and a.lower() == b.split()[-1].lower()):
                 return
             if a and not b:
                 small, big = big, small     # keep the name the series knows

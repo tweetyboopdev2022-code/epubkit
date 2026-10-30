@@ -422,20 +422,8 @@ class Names:
         return bool(self.owner)
 
     def of(self, name: str) -> str:
-        """The list's name for this one, or "" when it isn't there. A one-word
-        row that ends someone else's name says nothing: the Harry Potter wiki
-        has a "Friar" of its own, and kept the Fat Friar's "My dear Friar"
-        apart from him."""
-        low = (name or "").strip().lower()
-        who = self.owner.get(low, "")
-        if who and " " not in who and who.lower() in self._tails():
-            return ""
-        return who
-
-    def _tails(self) -> set[str]:
-        if not hasattr(self, "_tail_words"):
-            self._tail_words = {n.split()[-1].lower() for n in self.kind if len(n.split()) > 1}
-        return self._tail_words
+        """The list's name for this one, or "" when it isn't there."""
+        return self.owner.get((name or "").strip().lower(), "")
 
     def words(self) -> set[str]:
         """Every word of every name on the list: an entry may use them even when

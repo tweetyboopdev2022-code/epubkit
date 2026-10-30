@@ -839,13 +839,31 @@ def test_a_title_in_front_of_a_full_name_still_ties_its_halves():
     assert "Johnson" in got["Angelina"] and "Johnson" not in got
 
 
-def test_a_one_word_wiki_row_that_ends_another_name_says_nothing():
+def test_a_one_word_wiki_row_that_ends_another_name_does_not_split_them():
     from epubkit import series_memory as S
-    names = S.Names([("Fat Friar", ["The Fat Friar"], "person"), ("Friar", [], "person"),
-                     ("Rubeus Hagrid", ["Hagrid"], "person"), ("Peeves", [], "person")])
-    assert names.of("Friar") == "" and names.of("Fat Friar") == "Fat Friar"
-    assert names.of("Hagrid") == "Rubeus Hagrid" and names.of("Peeves") == "Peeves"
+    names = S.Names([("Fat Friar", ["The Fat Friar"], "person"), ("Friar", [], "person")])
+    # the list still says Friar is a person: round 14 lost Odette and Lavender
+    # when such rows stopped counting
+    assert names.of("Friar") == "Friar" and names.is_person("Friar")
     groups = {"Fat Friar": ["Fat Friar"], "Friar": ["Friar"]}
     got = C.merge_names(groups, {"Fat Friar": 3, "Friar": 1}, [],
                         keep_as=lambda n: names.of(n), hero="Harry")
     assert "Friar" in got["Fat Friar"] and "Friar" not in got
+
+
+def test_titles_are_not_names():
+    docs = [(1, "a", "", [(0, "Donut, Queen of All That Is, bowed. Yes, Majesty, said Carl."),
+                          (1, "Carl knelt to the Queen of All That Is while Majesty smiled.")])]
+    names = C.find_names(docs)
+    assert not [n for n in names if "That" in n] and "Majesty" not in names
+
+
+def test_a_quote_differs_from_the_book_only_in_case_and_marks():
+    words = C.WORDS["en"]
+    src = 'The hat shouted "GRYFFINDOR!" and Neville ran off still wearing it.'
+    assert words["problems"]["quote"] not in C.problems(
+        "A clumsy boy sorted into Gryffindor.", "shouted GRYFFINDOR, and Neville",
+        src, ["Neville"], {}, words)
+    assert words["problems"]["quote"] not in C.problems(
+        "The school nurse at Hogwarts.", "SAME", "Madam Pomfrey, the school nurse at Hogwarts",
+        ["Madam Pomfrey"], {}, words)
