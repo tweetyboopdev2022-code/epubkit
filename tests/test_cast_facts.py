@@ -54,14 +54,15 @@ class Model:
         if "Name | kind | matters" in prompt:
             names = re.findall(r"(?m)^- ([^:\n]+):", prompt.split("Names:", 1)[1])
             return "\n".join("%s | %s | no" % (n, "other") for n in names)
-        if "Name | fact | quote" in prompt:
+        if "Name | kind | fact | quote" in prompt:
             text = prompt.split("Text:", 1)[1]
-            out = ["%s | %s | %s" % row for key, row in self.facts if key in text]
+            out = ["%s | %s | %s | %s" % ((row[0], "change" if "died" in row[1] else "who") + row[1:])
+                   for key, row in self.facts if key in text]
             return "\n".join(out) or "NONE"
         if "Write the who's-who entry" in prompt:
             if self.bad_entry:
                 return "A wizard from Narnia who hates Zorblax."
-            lines = re.findall(r"(?m)^- (.+)$", prompt.split("in order", 1)[1])
+            lines = re.findall(r"(?m)^- (.+)$", prompt.split("Who ", 1)[1])
             return " ".join(lines[-2:])
         return ""
 
@@ -140,7 +141,7 @@ def test_someone_never_told_about_gets_a_question_of_their_own():
         """Says nothing about Katia unless she is asked about alone."""
         def __call__(self, prompt, system, usable):
             reply = super().__call__(prompt, system, usable)
-            if "Name | fact | quote" in prompt and "- Katia: nothing yet" not in prompt:
+            if "Name | kind | fact | quote" in prompt and "- Katia: nothing yet" not in prompt:
                 reply = "\n".join(x for x in reply.splitlines()
                                    if not x.startswith("Katia")) or "NONE"
             return reply
@@ -148,3 +149,25 @@ def test_someone_never_told_about_gets_a_question_of_their_own():
     rows, _report, _ = run(model)
     katia = [r for r in rows if r[3] == "Katia"]
     assert katia and "doppelganger" in katia[0][6]
+
+
+def test_a_fact_line_with_or_without_its_kind():
+    got = F.parse_facts("Albus Dumbledore | who | Headmaster of Hogwarts | the headmaster of Hogwarts\n"
+                        "Hagrid | Keeper of Keys | Keeper of Keys and Grounds at Hogwarts\nNONE")
+    assert got[0] == ("Albus Dumbledore", "who", "Headmaster of Hogwarts", "the headmaster of Hogwarts")
+    assert got[1][:3] == ("Hagrid", "who", "Keeper of Keys")
+
+
+def test_a_quote_may_differ_by_a_word_or_a_mark():
+    text = 'The hat shouted "GRYFFINDOR!" and Neville ran off still wearing it to the table.'
+    assert F.quoted("shouted Gryffindor and Neville ran", text)
+    assert F.quoted("Neville ran off wearing it to the table", text)
+    assert not F.quoted("Neville is a Slytherin prefect", text)
+
+
+def test_who_they_are_is_never_pushed_out_by_the_latest_facts():
+    facts = [F.Fact(i, 1, "a", i, "fact %d" % i, kind="who" if i < 2 else "change")
+             for i in range(12)]
+    who, changes = F._shown_facts(facts)
+    assert [f.text for f in who] == ["fact 0", "fact 1"]
+    assert changes[-1].text == "fact 11" and len(changes) <= F.LAST_FACTS

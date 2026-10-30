@@ -27,6 +27,7 @@ Rows have the same shape as cast.build's, so the Kobo side does not change.
 """
 from __future__ import annotations
 
+import difflib
 import re
 from collections import Counter
 
@@ -41,20 +42,20 @@ Text:
 {text}
 
 For each person above that this text tells the reader something new and lasting about, write one line:
-Name | fact | quote
+Name | kind | fact | quote
 
-- fact: one short sentence about who they are: what they are (species, job, role, title), how they are tied to someone (family, partner, friend, enemy, ally, boss, sponsor), or a big change (they join or leave someone, die, change form or body, are revealed to be someone or something else).
-- Not small actions, not what they say or feel in a scene, and nothing the reader already knows.
+- kind: who (what they are: species, job, role, title, what they can do), tie (how they are tied to someone: family, partner, friend, enemy, ally, boss, sponsor, guide), or change (a big change: they join or leave someone, die, change form or body, are revealed to be someone or something else).
+- fact: one short sentence of that kind. Not where they are or what they do, say or feel in this scene, and nothing the reader already knows.
 - Say only what the text says plainly, about that person and not someone else in the scene.
 - quote: a few words copied exactly from the text that show the fact.
 - Use each name exactly as listed. If nothing new and lasting is said, write NONE."""
 
 COMPOSE = """Write the who's-who entry for {name} in "{title}", for a reader at this point in the book.{about}
 
-What the reader has been told about {name}, in order (a later line can change an earlier one):
-{facts}
-
-Write one or two short sentences, at most 35 words: who {name} is and how they fit into the story, then what is true about them now if something changed (they died, left, were revealed to be someone else). Use only the lines above and keep the most important ones. Do not start with the name. Answer with the entry only."""
+Who {name} is:
+{who}
+{changes}
+Write one or two short sentences, at most 35 words. First say who {name} is: what they are and how they are tied to the people around them{hero_tie}. Then, if there are changes, what is true about them now. Never leave out who they are for something smaller. Use only the lines above. Do not start with the name. Answer with the entry only."""
 
 SYSTEM = ("You keep a who's who for readers of a novel. You only state what the text "
           "you are given says plainly.")
@@ -71,6 +72,7 @@ MAX_FACT_WORDS = 30
 MAX_ENTRY_WORDS = 40
 
 _FACT_LINE = re.compile(r"^\W*([^|\n]{1,60}?)\s*\|\s*([^|\n]+?)\s*\|\s*(.+?)\s*$", re.M)
+KINDS = ("who", "tie", "change")
 
 
 def _bare(s: str) -> str:
@@ -83,14 +85,41 @@ def _words(text: str) -> set[str]:
     return found | {re.sub(r"['’]s$", "", w) for w in found}
 
 
-def parse_facts(text: str) -> list[tuple[str, str, str]]:
+def parse_facts(text: str) -> list[tuple[str, str, str, str]]:
+    """[(name, kind, fact, quote)]; a line without a kind is a "who"."""
     out = []
     for m in _FACT_LINE.finditer(text or ""):
-        name, fact, quote = (x.strip(" *`\"“”") for x in m.groups())
+        cells = [x.strip(" *`\"“”") for x in m.group(0).strip().split("|")]
+        cells = [re.sub(r"^\W*", "", cells[0])] + cells[1:]
+        if len(cells) >= 4:
+            name, kind, fact, quote = cells[0], cells[1].lower(), cells[2], "|".join(cells[3:])
+        elif len(cells) == 3:
+            name, kind, fact, quote = cells[0], "who", cells[1], cells[2]
+        else:
+            continue
         if name.lower() in ("name", "none") or fact.lower() in ("fact", "none", "-", ""):
             continue
-        out.append((name, fact, quote))
+        out.append((name, kind.split()[0] if kind.split() else "who", fact, quote.strip()))
     return out
+
+
+def quoted(quote: str, text: str) -> bool:
+    """The quote is in the text, give or take a word or a mark: the model
+    copies "GRYFFINDOR!" as "Gryffindor", or drops an "and"."""
+    q, t = _bare(quote), _bare(text)
+    if len(q.split()) < 3:
+        return False
+    if q in t:
+        return True
+    qw, tw = q.split(), t.split()
+    starts = {i for i, w in enumerate(tw) if w in qw[:2] or w == qw[-1]}
+    for i in starts:
+        for a in (i, i - len(qw) + 1):
+            win = tw[max(0, a):max(0, a) + len(qw) + 2]
+            sm = difflib.SequenceMatcher(None, win, qw, autojunk=False)
+            if sum(b.size for b in sm.get_matching_blocks()) >= 0.8 * len(qw):
+                return True
+    return False
 
 
 def fact_problems(fact: str, quote: str, text: str, forms, known: str, allowed=(),
@@ -98,8 +127,7 @@ def fact_problems(fact: str, quote: str, text: str, forms, known: str, allowed=(
     """Why a fact can't be used, [] if it can. text: the part it came from;
     known: what the reader was told about this person already."""
     out = []
-    q = _bare(quote)
-    if len(q.split()) < 3 or q not in _bare(text):
+    if not quoted(quote, text):
         out.append("quote")
     words = fact.split()
     if len(words) > MAX_FACT_WORDS or len(words) < 3:
@@ -158,24 +186,30 @@ def entry_problems(entry: str, facts_text: str, forms) -> list[str]:
 
 
 class Fact:
-    __slots__ = ("pos", "order", "path", "para", "text", "earlier")
+    __slots__ = ("pos", "order", "path", "para", "text", "earlier", "kind")
 
-    def __init__(self, pos, order, path, para, text, earlier=False):
+    def __init__(self, pos, order, path, para, text, earlier=False, kind="who"):
         self.pos, self.order, self.path, self.para = pos, order, path, para
-        self.text, self.earlier = text, earlier
+        self.text, self.earlier, self.kind = text, earlier, kind
 
 
-def _shown_facts(facts: list) -> list:
-    if len(facts) <= FIRST_FACTS + LAST_FACTS:
-        return list(facts)
-    return facts[:FIRST_FACTS] + facts[-LAST_FACTS:]
+def _shown_facts(facts: list) -> tuple[list, list]:
+    """(who they are, what changed): every "who" and "tie" fact, the first
+    few and the latest, and the latest changes. Round 17 showed the latest
+    facts only, and Dumbledore ended as "watches the Quidditch match"."""
+    who = [f for f in facts if f.kind != "change"]
+    if len(who) > FIRST_FACTS + LAST_FACTS:
+        who = who[:FIRST_FACTS] + who[-LAST_FACTS:]
+    changes = [f for f in facts if f.kind == "change"][-LAST_FACTS // 2:]
+    return who, changes
 
 
 def _fallback(facts: list) -> str:
-    """An entry without the model: the first fact, and the latest if it
-    says something else."""
+    """An entry without the model: the first fact, and the latest change if
+    there is one, else the latest fact."""
     first = facts[0].text.rstrip(". ") + "."
-    last = facts[-1].text.rstrip(". ") + "."
+    changes = [f for f in facts if f.kind == "change"]
+    last = (changes or facts)[-1].text.rstrip(". ") + "."
     return first if len(facts) == 1 or last == first else first + " " + last
 
 
@@ -333,9 +367,14 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
         return p.entry or "; ".join(f.text for f in p.facts) or "nothing yet"
 
     def compose(p, upto_facts):
-        shown = _shown_facts(upto_facts)
-        facts_text = "\n".join("- " + f.text for f in shown)
-        prompt = COMPOSE.format(name=p.name, title=title, about=about, facts=facts_text)
+        who, changes = _shown_facts(upto_facts)
+        facts_text = "\n".join("- " + f.text for f in who + changes)
+        prompt = COMPOSE.format(
+            name=p.name, title=title, about=about,
+            who="\n".join("- " + f.text for f in who) or "- (nothing yet)",
+            changes=("\nWhat changed, in order:\n" + "\n".join("- " + f.text for f in changes)
+                     + "\n") if changes else "",
+            hero_tie=(", above all to %s" % hero) if hero and p.name != hero else "")
         reason = []
         for attempt in range(2):
             text = prompt + (words["again"].format(problems="\n".join("- " + r for r in reason))
@@ -377,7 +416,10 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                                 SYSTEM, lambda t: bool(parse_facts(t)) or "NONE" in t.upper())
                 except Exception:                           # noqa: BLE001
                     continue
-                for who, fact, quote in parse_facts(reply):
+                for who, kind, fact, quote in parse_facts(reply):
+                    if kind not in KINDS:
+                        dropped["scene"] += 1
+                        continue
                     p = match(who, batch)
                     if p is None:
                         dropped["not one of the people asked about"] += 1
@@ -391,12 +433,12 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                         continue
                     if any(C._plain(fact) == C._plain(f.text) for f in p.facts):
                         continue
-                    q = _bare(quote)
-                    para = next((n for n, t in part if q in _bare(t)), None)
+                    para = next((n for n, t in part if quoted(quote, t)), None)
                     if para is None:
                         para = max(m[2] for m in p.mentions
                                    if m[0] == order and part[0][0] <= m[2] <= part[-1][0])
-                    f = Fact(C._pos(order, para), order, path, para, fact.rstrip(". ") + ".")
+                    f = Fact(C._pos(order, para), order, path, para, fact.rstrip(". ") + ".",
+                             kind=kind)
                     new.setdefault(p.name, []).append(f)
                     kept[0] += 1
             for p in here:
@@ -444,14 +486,13 @@ def build(ctx, docs, ask, *, hero: str = "", first_person: bool = False,
                         SYSTEM, lambda t: bool(parse_facts(t)) or "NONE" in t.upper())
         except Exception:                                   # noqa: BLE001
             continue
-        for who, fact, quote in parse_facts(reply):
-            if match(who, [p]) is None or \
+        for who, kind, fact, quote in parse_facts(reply):
+            if kind not in KINDS or match(who, [p]) is None or \
                     fact_problems(fact, quote, text, p.forms, "", allowed, facts, p.name):
                 continue
-            q = _bare(quote)
-            at = next((x for x in part if q in _bare(x[3])), part[0])
+            at = next((x for x in part if quoted(quote, x[3])), part[0])
             p.facts.append(Fact(C._pos(at[0], at[2]), at[0], at[1], at[2],
-                                fact.rstrip(". ") + "."))
+                                fact.rstrip(". ") + ".", kind=kind))
             kept[0] += 1
             break
         if p.facts:
